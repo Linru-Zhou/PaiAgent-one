@@ -238,6 +238,13 @@ public class AgentMemoryService {
         return String.join(" OR ", quoted);
     }
 
+    /**
+     * cosine > 0 几乎总是成立，不是有效的相关性过滤。实测本地 embedding 模型（nomic-embed-text）
+     * 对完全不相关的短句也能给到 0.55~0.70 的 cosine，真正的同义改写能到 0.89+；0.75 是照实测
+     * 数据定的下限，不是随便拍的数字。换了 embedding 模型要重新用真实数据校准这个值。
+     */
+    private static final double MIN_COSINE_SIMILARITY = 0.75;
+
     private List<String> vectorRank(List<Double> queryEmbedding, List<MemoryRow> candidates) {
         if (queryEmbedding == null || queryEmbedding.isEmpty()) {
             return List.of();
@@ -245,7 +252,7 @@ public class AgentMemoryService {
         return candidates.stream()
                 .filter(row -> row.embedding != null && !row.embedding.isEmpty())
                 .map(row -> Map.entry(row.id, cosine(queryEmbedding, row.embedding)))
-                .filter(e -> e.getValue() > 0)
+                .filter(e -> e.getValue() >= MIN_COSINE_SIMILARITY)
                 .sorted(Comparator.<Map.Entry<String, Double>>comparingDouble(Map.Entry::getValue).reversed())
                 .map(Map.Entry::getKey)
                 .toList();
