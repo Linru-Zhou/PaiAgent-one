@@ -84,3 +84,6 @@ paiagent:
   default-password: ${APP_AUTH_DEFAULT_PASSWORD:admin123}
   skills:
     path: skills
+  memory:
+    # Agent 长期记忆使用独立的 SQLite 文件存储，与主库 MySQL 解耦
+    sqlite-path: ${AGENT_MEMORY_DB_PATH:data/agent-memory.db}
