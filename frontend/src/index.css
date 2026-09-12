@@ -690,6 +690,30 @@ select {
   background: #2563eb !important;
 }
 
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #2563eb !important;
+  stroke-width: 3 !important;
+}
+
+.workflow-edge-delete-btn {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.25);
+}
+
+.workflow-edge-delete-btn:hover {
+  background: #dc2626;
+}
+
 .workflow-node-handle.condition-handle {
   background: #ea580c !important;
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -10,8 +10,15 @@ import {
   Handle,
   Position,
   addEdge,
+  applyNodeChanges,
+  applyEdgeChanges,
   useNodesState,
   useEdgesState,
+  useReactFlow,
+  BaseEdge,
+  EdgeToolbar,
+  getSmoothStepPath,
+  EdgeProps,
   OnNodesChange,
   OnEdgesChange,
   OnConnect,
@@ -213,65 +220,143 @@ const nodeTypes = {
 };
 
 /**
+ * 带删除按钮的连线组件。
+ * 之前删除连线只能靠"选中后按 Backspace/Delete"，既没有可见的操作入口，
+ * 也没有选中态的视觉反馈，用户完全发现不了。这里加一个悬停/选中时出现的
+ * 删除按钮，作为始终可用、可发现的删除方式。
+ */
+const WorkflowEdge = ({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  style,
+  markerEnd,
+}: EdgeProps) => {
+  const { deleteElements } = useReactFlow();
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
+  return (
+    <>
+      <BaseEdge id={id} path={path} style={style} markerEnd={markerEnd} interactionWidth={24} />
+      <EdgeToolbar edgeId={id} x={labelX} y={labelY}>
+        <button
+          type="button"
+          className="workflow-edge-delete-btn"
+          title="删除连线"
+          onClick={(event) => {
+            event.stopPropagation();
+            deleteElements({ edges: [{ id }] });
+          }}
+        >
+          ×
+        </button>
+      </EdgeToolbar>
+    </>
+  );
+};
+
+const edgeTypes = {
+  'workflow-edge': WorkflowEdge,
+};
+
+/**
  * 中间画布组件
  */
 const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
   const { nodes: storeNodes, edges: storeEdges, setNodes: setStoreNodes, setEdges: setStoreEdges } = useWorkflowStore();
-  
-  const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(storeEdges);
 
-  // 当 store 中的 nodes/edges 变化时，同步更新到本地状态
+  const [nodes, setNodes] = useNodesState(storeNodes);
+  const [edges, setEdges] = useEdgesState(storeEdges);
+
+  /*
+   * The canvas state (nodes/edges) and the app-level Zustand store both hold a
+   * copy of the graph, kept in sync in both directions. A push FROM the canvas
+   * (e.g. selecting or deleting an edge) updates the store, which in turn used
+   * to unconditionally re-push INTO the canvas — clobbering the just-applied
+   * change (and any transient state like `selected`) before React Flow's own
+   * delete-key handler could act on it. These refs mark "this store update
+   * originated from the canvas itself, skip the echo" so external updates
+   * (loading a workflow, editing a node in the Inspector) still flow in.
+   */
+  const skipNodesSync = useRef(false);
+  const skipEdgesSync = useRef(false);
+
+  // 当 store 中的 nodes/edges 变化时，同步更新到本地状态（跳过画布自己发起的回声更新）
   useEffect(() => {
-    console.log('Store nodes changed:', storeNodes);
+    if (skipNodesSync.current) {
+      skipNodesSync.current = false;
+      return;
+    }
     setNodes(storeNodes);
   }, [storeNodes, setNodes]);
 
   useEffect(() => {
-    console.log('Store edges changed:', storeEdges);
+    if (skipEdgesSync.current) {
+      skipEdgesSync.current = false;
+      return;
+    }
     const edgesWithMarkers = storeEdges.map(edge => ({
       ...edge,
-      type: 'smoothstep',
+      type: 'workflow-edge',
       style: WORKFLOW_EDGE_STYLE,
       markerEnd: WORKFLOW_EDGE_MARKER,
     }));
     setEdges(edgesWithMarkers);
   }, [storeEdges, setEdges]);
 
-  // 同步到 store
+  /*
+   * Pushing to the Zustand store must not happen synchronously inside a
+   * setState updater (React logs "Cannot update a component while rendering
+   * a different component" and the store write is unreliable). Deferring it
+   * with setTimeout(0) moves it out of the render phase — this is why the
+   * original code did the same, even though it looked like an odd workaround.
+   */
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
-    onNodesChange(changes);
-    // 使用 setTimeout 确保状态更新后再同步
-    setTimeout(() => {
-      setNodes((currentNodes) => {
-        setStoreNodes(currentNodes);
-        return currentNodes;
-      });
-    }, 0);
-  }, [onNodesChange, setNodes, setStoreNodes]);
+    setNodes((currentNodes) => {
+      const updatedNodes = applyNodeChanges(changes, currentNodes);
+      setTimeout(() => {
+        skipNodesSync.current = true;
+        setStoreNodes(updatedNodes);
+      }, 0);
+      return updatedNodes;
+    });
+  }, [setNodes, setStoreNodes]);
 
   const handleEdgesChange: OnEdgesChange = useCallback((changes) => {
-    onEdgesChange(changes);
-    setTimeout(() => {
-      setEdges((currentEdges) => {
-        setStoreEdges(currentEdges);
-        return currentEdges;
-      });
-    }, 0);
-  }, [onEdgesChange, setEdges, setStoreEdges]);
+    setEdges((currentEdges) => {
+      const updatedEdges = applyEdgeChanges(changes, currentEdges);
+      setTimeout(() => {
+        skipEdgesSync.current = true;
+        setStoreEdges(updatedEdges);
+      }, 0);
+      return updatedEdges;
+    });
+  }, [setEdges, setStoreEdges]);
 
   const handleConnect: OnConnect = useCallback((connection: Connection) => {
-    console.log('Connection created:', connection);
     setEdges((eds) => {
       const newEdge = {
         ...connection,
-        type: 'smoothstep',
+        type: 'workflow-edge',
         style: WORKFLOW_EDGE_STYLE,
         markerEnd: WORKFLOW_EDGE_MARKER,
       };
-      console.log('New edge:', newEdge);
       const updatedEdges = addEdge(newEdge, eds);
-      setStoreEdges(updatedEdges);
+      setTimeout(() => {
+        skipEdgesSync.current = true;
+        setStoreEdges(updatedEdges);
+      }, 0);
       return updatedEdges;
     });
   }, [setEdges, setStoreEdges]);
@@ -301,7 +386,10 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
 
       setNodes((nds) => {
         const updatedNodes = nds.concat(newNode);
-        setStoreNodes(updatedNodes);
+        setTimeout(() => {
+          skipNodesSync.current = true;
+          setStoreNodes(updatedNodes);
+        }, 0);
         return updatedNodes;
       });
     },
@@ -332,8 +420,9 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
         onDragOver={onDragOver}
         onNodeClick={handleNodeClick}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         defaultEdgeOptions={{
-          type: 'smoothstep',
+          type: 'workflow-edge',
           style: WORKFLOW_EDGE_STYLE,
           markerEnd: WORKFLOW_EDGE_MARKER,
         }}
