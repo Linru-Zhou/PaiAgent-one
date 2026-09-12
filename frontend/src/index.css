@@ -30,13 +30,14 @@ select {
 }
 
 .workflow-topbar {
-  height: 68px;
+  min-height: 68px;
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 0 18px;
+  gap: 8px 16px;
+  padding: 10px 18px;
   border-bottom: 1px solid #dce3ee;
   background: rgba(255, 255, 255, 0.9);
   backdrop-filter: blur(12px);
