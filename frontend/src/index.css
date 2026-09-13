@@ -925,6 +925,29 @@ select {
   width: 100%;
 }
 
+.debug-node-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.debug-token-alert {
+  margin-bottom: 4px;
+}
+
+.debug-aggregate-usage {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #e1e7f0;
+  font-size: 12px;
+  color: #475569;
+}
+
+.debug-muted {
+  color: #94a3b8;
+}
+
 .debug-node-name {
   display: inline-flex;
   align-items: center;

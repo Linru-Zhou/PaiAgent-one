@@ -162,6 +162,8 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
 
         // 7. 构建输出
         Map<String, Object> output = buildOutput(llmResponse, config.getOutputParams());
+        output.put("model", config.getModel());
+        output.put("provider", provider);
         log.info("{} 节点输出: {}", provider.toUpperCase(Locale.ROOT), output);
 
         return output;

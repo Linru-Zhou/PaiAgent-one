@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import AudioPlayer from './AudioPlayer';
 import { buildBackendUrl } from '../config/api';
+import { estimateLlmCost, formatCost } from '../utils/llmPricing';
 import {
   ExecutionEvent,
   ExecutionNodeResult,
@@ -311,6 +312,44 @@ const formatToolTraceLogs = (output: unknown) => (
     .map(formatToolTraceLog)
     .filter((log): log is string => Boolean(log))
 );
+
+interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  model?: string;
+  provider?: string;
+}
+
+const getTokenUsage = (output: unknown): TokenUsage | null => {
+  const normalized = normalizeValue(output);
+  const record = isRecord(normalized) && isRecord(normalized.output) ? normalized.output : normalized;
+  if (!isRecord(record)) {
+    return null;
+  }
+  const totalTokens = typeof record.totalTokens === 'number' ? record.totalTokens : 0;
+  const inputTokens = typeof record.inputTokens === 'number' ? record.inputTokens : 0;
+  const outputTokens = typeof record.outputTokens === 'number' ? record.outputTokens : 0;
+  if (totalTokens <= 0 && inputTokens <= 0 && outputTokens <= 0) {
+    return null;
+  }
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: totalTokens || inputTokens + outputTokens,
+    model: typeof record.model === 'string' ? record.model : undefined,
+    provider: typeof record.provider === 'string' ? record.provider : undefined,
+  };
+};
+
+const TokenUsageTag = ({ usage }: { usage: TokenUsage }) => {
+  const estimate = estimateLlmCost(usage.model || usage.provider, usage.inputTokens, usage.outputTokens);
+  return (
+    <Tag color="geekblue" title={usage.model ? `模型: ${usage.model}` : undefined}>
+      {usage.totalTokens} tokens{estimate ? ` · 约 ${formatCost(estimate)}` : ''}
+    </Tag>
+  );
+};
 
 const formatDuration = (milliseconds: number | string | undefined | null) => {
   const ms = typeof milliseconds === 'string'
@@ -787,6 +826,36 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     currentNodeResults.filter((r) => r.status === 'SUCCESS').length
   );
 
+  const getAggregateUsage = () => {
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let totalTokens = 0;
+    const costsByLabel = new Map<string, { currency: 'CNY' | 'USD'; cost: number }>();
+    let hasUnpriced = false;
+
+    currentNodeResults.forEach((node) => {
+      const usage = getTokenUsage(node.output);
+      if (!usage) return;
+      inputTokens += usage.inputTokens;
+      outputTokens += usage.outputTokens;
+      totalTokens += usage.totalTokens;
+      const estimate = estimateLlmCost(usage.model || usage.provider, usage.inputTokens, usage.outputTokens);
+      if (estimate) {
+        const existing = costsByLabel.get(estimate.currency) || { currency: estimate.currency, cost: 0 };
+        existing.cost += estimate.cost;
+        costsByLabel.set(estimate.currency, existing);
+      } else {
+        hasUnpriced = true;
+      }
+    });
+
+    if (totalTokens === 0) {
+      return null;
+    }
+
+    return { inputTokens, outputTokens, totalTokens, costs: Array.from(costsByLabel.values()), hasUnpriced };
+  };
+
   const renderNodeResultItem = (nodeResult: NodeResult) => {
     let statusColor = 'default';
     let statusIcon = <LoadingOutlined />;
@@ -802,6 +871,8 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
       statusIcon = <LoadingOutlined />;
     }
 
+    const tokenUsage = getTokenUsage(nodeResult.output);
+
     return {
       key: nodeResult.nodeId,
       label: (
@@ -809,11 +880,28 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
           <span className="debug-node-name">
             {statusIcon} {nodeResult.nodeName}
           </span>
-          <Tag color={statusColor}>{formatDuration(nodeResult.duration)}</Tag>
+          <span className="debug-node-tags">
+            {tokenUsage && <TokenUsageTag usage={tokenUsage} />}
+            <Tag color={statusColor}>{formatDuration(nodeResult.duration)}</Tag>
+          </span>
         </div>
       ),
       children: (
         <div className="debug-node-result-body">
+          {tokenUsage && (
+            <Alert
+              type="info"
+              showIcon
+              className="debug-token-alert"
+              message={`Token 用量：输入 ${tokenUsage.inputTokens} / 输出 ${tokenUsage.outputTokens} / 合计 ${tokenUsage.totalTokens}`}
+              description={(() => {
+                const estimate = estimateLlmCost(tokenUsage.model || tokenUsage.provider, tokenUsage.inputTokens, tokenUsage.outputTokens);
+                return estimate
+                  ? `按 ${estimate.label} 参考单价估算，本次调用约花费 ${formatCost(estimate)}（非实时官方价格，仅供参考）`
+                  : `模型 ${tokenUsage.model || tokenUsage.provider || '未知'} 暂无参考单价，无法估算费用`;
+              })()}
+            />
+          )}
           <div>
             <div className="debug-field-label">输入数据</div>
             <DebugValue value={nodeResult.input} preferOutputText />
@@ -916,6 +1004,20 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
                   <div className="mt-2 text-sm text-gray-600">
                     已完成节点: {getCompletedNodeCount()} / {getProgressTotal()}
                   </div>
+                  {(() => {
+                    const aggregate = getAggregateUsage();
+                    if (!aggregate) return null;
+                    const costText = aggregate.costs
+                      .map((c) => formatCost({ label: '', currency: c.currency, cost: c.cost }))
+                      .join(' + ');
+                    return (
+                      <div className="debug-aggregate-usage">
+                        本次运行共消耗 {aggregate.totalTokens} tokens（输入 {aggregate.inputTokens} / 输出 {aggregate.outputTokens}）
+                        {costText && <> ，参考费用约 {costText}</>}
+                        {aggregate.hasUnpriced && <span className="debug-muted">（含未收录单价的模型，未计入费用）</span>}
+                      </div>
+                    );
+                  })()}
                 </>
               )}
             </div>
