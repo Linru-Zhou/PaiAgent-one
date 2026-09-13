@@ -57,6 +57,28 @@ interface TtsOutputParam {
   value: string;
 }
 
+interface ConditionRule {
+  id: string;
+  field: string;
+  operator: string;
+  value: string;
+}
+
+const CONDITION_OPERATORS: { value: string; label: string; needsValue: boolean }[] = [
+  { value: 'eq', label: '等于', needsValue: true },
+  { value: 'neq', label: '不等于', needsValue: true },
+  { value: 'gt', label: '大于', needsValue: true },
+  { value: 'gte', label: '大于等于', needsValue: true },
+  { value: 'lt', label: '小于', needsValue: true },
+  { value: 'lte', label: '小于等于', needsValue: true },
+  { value: 'contains', label: '包含', needsValue: true },
+  { value: 'notContains', label: '不包含', needsValue: true },
+  { value: 'startsWith', label: '以...开头', needsValue: true },
+  { value: 'endsWith', label: '以...结尾', needsValue: true },
+  { value: 'isEmpty', label: '为空', needsValue: false },
+  { value: 'isNotEmpty', label: '不为空', needsValue: false },
+];
+
 interface WorkflowCanvasData {
   nodes?: Node[];
   edges?: Edge[];
@@ -1282,6 +1304,27 @@ const EditorPage = () => {
     updateSelectedNodeData({
       outputParams: getAgentPlanOutputParams().filter((_, i) => i !== index)
     });
+  };
+  const getConditionRules = (): ConditionRule[] => (
+    Array.isArray(selectedNode?.data?.conditions) ? selectedNode.data.conditions as ConditionRule[] : []
+  );
+  const addConditionRule = () => {
+    const rules = getConditionRules();
+    const newRule: ConditionRule = {
+      id: `cond-${Date.now()}-${rules.length}`,
+      field: 'input',
+      operator: 'contains',
+      value: ''
+    };
+    updateSelectedNodeData({ conditions: [...rules, newRule] });
+  };
+  const updateConditionRule = (index: number, patch: Partial<ConditionRule>) => {
+    const rules = [...getConditionRules()];
+    rules[index] = { ...rules[index], ...patch };
+    updateSelectedNodeData({ conditions: rules });
+  };
+  const removeConditionRule = (index: number) => {
+    updateSelectedNodeData({ conditions: getConditionRules().filter((_, i) => i !== index) });
   };
   const selectedNodeLabel = String(selectedNode?.data?.label || selectedNode?.id || '');
 
@@ -2865,11 +2908,77 @@ const EditorPage = () => {
                   </Form>
                 )}
 
+                {/* 条件分支节点配置 */}
+                {selectedNodeType === 'condition' && (
+                  <Form layout="vertical" className="workflow-config-form">
+                    <Alert
+                      className="workflow-form-example"
+                      type="info"
+                      showIcon
+                      message="示例：判断用户是不是要转人工"
+                      description={'规则按顺序从上到下判断，第一条命中的规则走它自己的分支；都不命中就走"否则(默认)"分支。比如加一条：字段填 input，操作符选"包含"，值填 转人工——命中时从画布上这条规则对应的连接点（按顺序编号，和下面列表顺序一致）拉一条线到你的转人工节点，默认连接点再连去正常问答节点。'}
+                    />
+                    <div className="workflow-config-section">
+                      <div className="workflow-config-section-header">
+                        <label className="font-medium text-gray-700">条件规则</label>
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={addConditionRule}>
+                          添加条件
+                        </Button>
+                      </div>
+                      {getConditionRules().map((rule, index) => {
+                        const operatorMeta = CONDITION_OPERATORS.find((o) => o.value === rule.operator);
+                        return (
+                          <div key={rule.id} className="mb-3 p-3 bg-gray-50 rounded">
+                            <div className="workflow-param-row is-compact" style={{ marginBottom: 8 }}>
+                              <span className="condition-badge">{index + 1}</span>
+                              <Input
+                                placeholder="字段，例如 input"
+                                value={rule.field}
+                                onChange={(e) => updateConditionRule(index, { field: e.target.value })}
+                                style={{ width: 110 }}
+                              />
+                              <Select
+                                value={rule.operator}
+                                options={CONDITION_OPERATORS.map((o) => ({ value: o.value, label: o.label }))}
+                                onChange={(value) => updateConditionRule(index, { operator: value })}
+                                style={{ width: 130 }}
+                              />
+                              {operatorMeta?.needsValue !== false && (
+                                <Input
+                                  placeholder="值，例如 转人工"
+                                  value={rule.value}
+                                  onChange={(e) => updateConditionRule(index, { value: e.target.value })}
+                                  style={{ flex: 1 }}
+                                />
+                              )}
+                              <Button
+                                type="text"
+                                danger
+                                icon={<DeleteOutlined />}
+                                onClick={() => removeConditionRule(index)}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {getConditionRules().length === 0 && (
+                        <div className="workflow-config-empty">
+                          还没有配置任何条件，所有输入都会走"否则(默认)"分支。点击"添加条件"创建第一条规则。
+                        </div>
+                      )}
+                      <div className="workflow-field-hint">
+                        字段支持从上游节点输出里取值，比如 input；条件从上到下依次判断，命中即停止，不再看后面的规则。
+                      </div>
+                    </div>
+                  </Form>
+                )}
+
 	                {/* 其他节点配置 */}
 	                {selectedNode.data?.type !== 'input' &&
 	                 selectedNode.data?.type !== 'output' &&
 	                 !isLlmNodeType(selectedNodeType) &&
 	                 selectedNode.data?.type !== 'tts' &&
+	                 selectedNodeType !== 'condition' &&
 	                 !isAgentPlanNode && (
                   <div className="workflow-config-empty">
                     该节点暂无可配置项
