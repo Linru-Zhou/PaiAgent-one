@@ -33,33 +33,55 @@ public class McpToolConfigController {
     @Operation(summary = "新增 MCP 工具")
     @PostMapping
     public Result<Map<String, Object>> create(@Valid @RequestBody McpToolConfigRequest request) {
-        return Result.success(mcpToolConfigService.createConfig(request));
+        try {
+            return Result.success(mcpToolConfigService.createConfig(request));
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        }
     }
 
     @Operation(summary = "新增 Agent Plan 联网搜索 MCP 工具")
     @PostMapping("/agent-plan-web-search")
     public Result<Map<String, Object>> createAgentPlanWebSearch(@Valid @RequestBody AgentPlanWebSearchMcpRequest request) {
-        return Result.success(mcpToolConfigService.createAgentPlanWebSearch(request));
+        try {
+            return Result.success(mcpToolConfigService.createAgentPlanWebSearch(request));
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        }
     }
 
     @Operation(summary = "更新 MCP 工具")
     @PutMapping("/{id}")
     public Result<Map<String, Object>> update(@PathVariable Long id,
                                               @Valid @RequestBody McpToolConfigRequest request) {
-        return Result.success(mcpToolConfigService.updateConfig(id, request));
+        try {
+            return Result.success(mcpToolConfigService.updateConfig(id, request));
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        }
     }
 
     @Operation(summary = "删除 MCP 工具")
     @DeleteMapping("/{id}")
     public Result<Void> delete(@PathVariable Long id) {
-        mcpToolConfigService.deleteConfig(id);
-        return Result.success();
+        try {
+            mcpToolConfigService.deleteConfig(id);
+            return Result.success();
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        }
     }
 
     @Operation(summary = "测试 MCP 工具")
     @PostMapping("/{id}/test")
     public Result<Map<String, Object>> test(@PathVariable Long id,
-                                            @RequestBody(required = false) McpToolTestRequest request) throws Exception {
-        return Result.success(mcpToolConfigService.testConfig(id, request == null ? null : request.getQuery()));
+                                            @RequestBody(required = false) McpToolTestRequest request) {
+        try {
+            return Result.success(mcpToolConfigService.testConfig(id, request == null ? null : request.getQuery()));
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        } catch (Exception e) {
+            return Result.error("MCP 工具调用失败: " + e.getMessage());
+        }
     }
 }

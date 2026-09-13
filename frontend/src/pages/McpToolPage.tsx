@@ -1,14 +1,46 @@
 import { useEffect, useState } from 'react';
-import { Button, Form, Input, List, Modal, Popconfirm, Space, Tag, Typography, message } from 'antd';
-import { ApiOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { Alert, Button, Form, Input, List, Modal, Popconfirm, Space, Tag, Typography, message } from 'antd';
+import { ApiOutlined, ArrowLeftOutlined, DeleteOutlined, PlusOutlined, SearchOutlined, ToolOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import {
   McpToolConfig,
   createAgentPlanWebSearchMcp,
+  createMcpTool,
   deleteMcpTool,
   getMcpTools,
   testMcpTool,
 } from '../api/mcpTools';
+
+interface CustomMcpFormValues {
+  name: string;
+  description?: string;
+  toolName: string;
+  command: string;
+  args?: string;
+  env?: string;
+}
+
+const CUSTOM_MCP_EXAMPLE: CustomMcpFormValues = {
+  name: '文件系统 MCP',
+  description: '示例：通过官方 filesystem MCP server 读写指定目录下的文件',
+  toolName: 'filesystem',
+  command: 'npx',
+  args: '-y\n@modelcontextprotocol/server-filesystem\n/Users/you/shared-folder',
+  env: 'LOG_LEVEL=info',
+};
+
+const getErrorMessage = (error: unknown, fallback: string): string => {
+  if (error && typeof error === 'object' && 'response' in error) {
+    const response = (error as { response?: { data?: { message?: string } } }).response;
+    if (response?.data?.message) {
+      return response.data.message;
+    }
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return fallback;
+};
 
 interface WebSearchResultItem {
   title?: string;
@@ -24,11 +56,14 @@ const McpToolPage = () => {
   const [tools, setTools] = useState<McpToolConfig[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customLoading, setCustomLoading] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [testingTool, setTestingTool] = useState<McpToolConfig | null>(null);
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
   const [testLoading, setTestLoading] = useState(false);
   const [createForm] = Form.useForm();
+  const [customForm] = Form.useForm<CustomMcpFormValues>();
   const [testForm] = Form.useForm();
 
   useEffect(() => {
@@ -51,20 +86,77 @@ const McpToolPage = () => {
 
   const handleCreateAgentPlanSearch = async () => {
     const values = await createForm.validateFields();
-    const result = await createAgentPlanWebSearchMcp(values);
-    if (result.code === 200) {
-      message.success('Agent Plan 联网搜索 MCP 已添加');
-      setCreateOpen(false);
-      createForm.resetFields();
-      await loadTools();
+    try {
+      const result = await createAgentPlanWebSearchMcp(values);
+      if (result.code === 200) {
+        message.success('Agent Plan 联网搜索 MCP 已添加');
+        setCreateOpen(false);
+        createForm.resetFields();
+        await loadTools();
+      } else {
+        message.error(result.message || '添加失败');
+      }
+    } catch (error) {
+      message.error(getErrorMessage(error, '添加失败，请稍后重试'));
+    }
+  };
+
+  const handleCreateCustomTool = async () => {
+    const values = await customForm.validateFields();
+    setCustomLoading(true);
+    try {
+      const args = (values.args || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const env: Record<string, string> = {};
+      (values.env || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .forEach((line) => {
+          const idx = line.indexOf('=');
+          if (idx > 0) {
+            env[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+          }
+        });
+
+      const result = await createMcpTool({
+        name: values.name,
+        description: values.description,
+        toolType: 'custom',
+        toolName: values.toolName,
+        transport: 'stdio',
+        command: values.command,
+        args,
+        env,
+      });
+      if (result.code === 200) {
+        message.success('自定义 MCP 工具已保存');
+        setCustomOpen(false);
+        customForm.resetFields();
+        await loadTools();
+      } else {
+        message.error(result.message || '添加失败');
+      }
+    } catch (error) {
+      message.error(getErrorMessage(error, '添加失败，请稍后重试'));
+    } finally {
+      setCustomLoading(false);
     }
   };
 
   const handleDelete = async (id: number) => {
-    const result = await deleteMcpTool(id);
-    if (result.code === 200) {
-      message.success('MCP 工具已删除');
-      await loadTools();
+    try {
+      const result = await deleteMcpTool(id);
+      if (result.code === 200) {
+        message.success('MCP 工具已删除');
+        await loadTools();
+      } else {
+        message.error(result.message || '删除失败');
+      }
+    } catch (error) {
+      message.error(getErrorMessage(error, '删除失败，请稍后重试'));
     }
   };
 
@@ -84,7 +176,11 @@ const McpToolPage = () => {
       if (result.code === 200) {
         setTestResult(result.data);
         message.success('MCP 工具调用成功');
+      } else {
+        message.error(result.message || 'MCP 工具调用失败');
       }
+    } catch (error) {
+      message.error(getErrorMessage(error, 'MCP 工具调用失败，请稍后重试'));
     } finally {
       setTestLoading(false);
     }
@@ -184,9 +280,14 @@ const McpToolPage = () => {
             <h2>MCP 工具</h2>
           </div>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-          添加 Agent Plan 联网搜索
-        </Button>
+        <Space>
+          <Button icon={<ToolOutlined />} onClick={() => { customForm.resetFields(); setCustomOpen(true); }}>
+            添加自定义 MCP 工具
+          </Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+            添加 Agent Plan 联网搜索
+          </Button>
+        </Space>
       </header>
 
       <div className="knowledge-layout">
@@ -218,10 +319,20 @@ const McpToolPage = () => {
             <List
               dataSource={tools}
               locale={{ emptyText: '还没有 MCP 工具，先添加 Agent Plan 联网搜索' }}
-              renderItem={(tool) => (
+              renderItem={(tool) => {
+                const canTest = tool.toolName === 'web_search';
+                return (
                 <List.Item
                   actions={[
-                    <Button key="test" icon={<SearchOutlined />} onClick={() => handleOpenTest(tool)}>测试</Button>,
+                    <Button
+                      key="test"
+                      icon={<SearchOutlined />}
+                      disabled={!canTest}
+                      title={canTest ? undefined : '当前执行引擎只接入了联网搜索（web_search）工具的调用，其他工具暂时只能保存配置，还不能在这里试用'}
+                      onClick={() => handleOpenTest(tool)}
+                    >
+                      测试
+                    </Button>,
                     <Popconfirm key="delete" title="删除这个 MCP 工具？" onConfirm={() => handleDelete(tool.id)}>
                       <Button danger icon={<DeleteOutlined />}>删除</Button>
                     </Popconfirm>,
@@ -234,6 +345,7 @@ const McpToolPage = () => {
                         <span>{tool.name}</span>
                         <Tag>{tool.toolType}</Tag>
                         {tool.preset === 1 && <Tag color="blue">预设</Tag>}
+                        {!canTest && <Tag color="warning">暂未接入执行引擎</Tag>}
                       </Space>
                     )}
                     description={(
@@ -247,7 +359,8 @@ const McpToolPage = () => {
                     )}
                   />
                 </List.Item>
-              )}
+                );
+              }}
             />
           </div>
         </main>
@@ -261,15 +374,83 @@ const McpToolPage = () => {
         okText="添加"
         width={640}
       >
+        <Alert
+          className="mcp-form-example"
+          type="info"
+          showIcon
+          message="示例"
+          description="名称随便起，比如「团队联网搜索」；API Key 在火山方舟控制台 → Agent Plan → Harness 配置里领取，格式类似一长串字母数字。添加后就可以在「大模型」节点的技能/工具里勾选联网搜索使用。"
+        />
         <Form form={createForm} layout="vertical" initialValues={{ name: 'Agent Plan 联网搜索' }}>
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
-            <Input />
+            <Input placeholder="例如：团队联网搜索" />
           </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={2} placeholder="可选，用于区分不同 Agent Plan key 或额度来源" />
           </Form.Item>
           <Form.Item name="apiKey" label="联网搜索 API Key" rules={[{ required: true, message: '请输入联网搜索 API Key' }]}>
             <Input.Password placeholder="来自 Agent Plan 使用配置 / 配置 Harness 的联网搜索 API Key" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="添加自定义 MCP 工具"
+        open={customOpen}
+        onCancel={() => setCustomOpen(false)}
+        onOk={handleCreateCustomTool}
+        okText="保存"
+        confirmLoading={customLoading}
+        width={680}
+      >
+        <Alert
+          className="mcp-form-example"
+          type="warning"
+          showIcon
+          message="先看这里"
+          description="这个表单可以保存任意 stdio 协议的 MCP Server 配置（比如官方的 filesystem、github 等），但目前工作流的执行引擎只内置了对「联网搜索」这一种工具的实际调用——其他工具存下来之后，暂时还不能在工作流节点里被调用或在这里点「测试」，属于预留的扩展位。点下面的按钮可以填入一个真实可跑的示例（本地文件系统 MCP）感受一下格式。"
+        />
+        <Space style={{ marginBottom: 12 }}>
+          <Button size="small" onClick={() => customForm.setFieldsValue(CUSTOM_MCP_EXAMPLE)}>
+            填入示例
+          </Button>
+        </Space>
+        <Form form={customForm} layout="vertical">
+          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+            <Input placeholder="例如：文件系统 MCP" />
+          </Form.Item>
+          <Form.Item name="description" label="描述">
+            <Input.TextArea rows={2} placeholder="这个工具是做什么用的，方便以后自己认得" />
+          </Form.Item>
+          <Form.Item
+            name="toolName"
+            label="工具名（toolName）"
+            rules={[{ required: true, message: '请输入工具名' }]}
+            extra="暴露给 Agent 的工具标识，例如 filesystem、github"
+          >
+            <Input placeholder="例如：filesystem" />
+          </Form.Item>
+          <Form.Item
+            name="command"
+            label="启动命令"
+            rules={[{ required: true, message: '请输入启动命令' }]}
+            extra="大多数 MCP Server 用 npx 或 uvx 启动，需要本机已安装 Node.js / uv"
+          >
+            <Input placeholder="例如：npx" />
+          </Form.Item>
+          <Form.Item
+            name="args"
+            label="启动参数"
+            extra="每行一个参数，会按顺序拼到启动命令后面"
+          >
+            <Input.TextArea rows={3} placeholder={'例如：\n-y\n@modelcontextprotocol/server-filesystem\n/Users/you/shared-folder'} />
+          </Form.Item>
+          <Form.Item
+            name="env"
+            label="环境变量"
+            extra="每行一个 KEY=VALUE，比如需要传 API Key 时用这里，而不是写进参数里"
+          >
+            <Input.TextArea rows={2} placeholder={'例如：\nGITHUB_TOKEN=ghp_xxxx'} />
           </Form.Item>
         </Form>
       </Modal>

@@ -32,6 +32,21 @@ export const createAgentPlanWebSearchMcp = (data: {
 }): Promise<ApiResult<McpToolConfig>> =>
   api.post('/api/mcp-tools/agent-plan-web-search', data);
 
+export interface CustomMcpToolPayload {
+  name: string;
+  description?: string;
+  toolType?: string;
+  toolName: string;
+  transport?: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  enabled?: number;
+}
+
+export const createMcpTool = (data: CustomMcpToolPayload): Promise<ApiResult<McpToolConfig>> =>
+  api.post('/api/mcp-tools', data);
+
 export const deleteMcpTool = (id: number): Promise<ApiResult<void>> =>
   api.delete(`/api/mcp-tools/${id}`);
 
