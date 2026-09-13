@@ -17,6 +17,7 @@ import {
   useReactFlow,
   BaseEdge,
   EdgeToolbar,
+  NodeResizer,
   getSmoothStepPath,
   EdgeProps,
   OnNodesChange,
@@ -113,7 +114,7 @@ const getKnowledgeBaseLabel = (data: WorkflowNodeData) => {
   return data.knowledgeBaseName || '已启用';
 };
 
-const WorkflowNodeCard = ({ data, selected }: NodeProps<WorkflowCardNode>) => {
+const WorkflowNodeCard = ({ id, data, selected }: NodeProps<WorkflowCardNode>) => {
   const workflowType = data.type || '';
   const meta = getNodeMeta(workflowType);
   const inputCount = Array.isArray(data.inputParams) ? data.inputParams.length : 0;
@@ -130,6 +131,14 @@ const WorkflowNodeCard = ({ data, selected }: NodeProps<WorkflowCardNode>) => {
 
   return (
     <div className={`workflow-node ${selected ? 'is-selected' : ''}`}>
+      <NodeResizer
+        nodeId={id}
+        isVisible={selected}
+        minWidth={198}
+        minHeight={90}
+        handleClassName="workflow-node-resize-handle"
+        lineClassName="workflow-node-resize-line"
+      />
       {workflowType !== 'input' && (
         <Handle
           type="target"

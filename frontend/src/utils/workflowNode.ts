@@ -28,12 +28,16 @@ export const getWorkflowNodeType = (node: Pick<Node, 'type' | 'data'>) => {
   return node.type && node.type !== REACT_FLOW_NODE_TYPE ? node.type : '';
 };
 
+const DEFAULT_NODE_WIDTH = 220;
+
 export const normalizeWorkflowNode = (node: Node): Node => {
   const workflowNodeType = getWorkflowNodeType(node);
 
   return {
     ...node,
     type: REACT_FLOW_NODE_TYPE,
+    // 只在节点从未被手动调整过大小时补默认宽度，避免每次同步都把用户拖拽出来的尺寸冲掉
+    width: node.width ?? DEFAULT_NODE_WIDTH,
     data: {
       ...node.data,
       type: workflowNodeType,

@@ -610,13 +610,30 @@ select {
 }
 
 .workflow-node {
-  width: 198px;
+  width: 100%;
+  height: 100%;
+  min-width: 198px;
+  min-height: 90px;
+  box-sizing: border-box;
   padding: 10px;
   border: 1px solid #dce4ef;
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  overflow: auto;
   transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.workflow-node-resize-handle {
+  width: 9px !important;
+  height: 9px !important;
+  border: 1.5px solid #ffffff !important;
+  background: #2563eb !important;
+  border-radius: 2px !important;
+}
+
+.workflow-node-resize-line {
+  border-color: #2563eb !important;
 }
 
 .workflow-node:hover {
