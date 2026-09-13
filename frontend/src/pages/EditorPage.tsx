@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Button, Input, Form, message, Checkbox, Select, Modal, List, Popconfirm } from 'antd';
+import { Alert, Button, Input, Form, message, Checkbox, Select, Modal, List, Popconfirm } from 'antd';
 import { SaveOutlined, FolderOpenOutlined, BugOutlined, LogoutOutlined, PlusOutlined, DeleteOutlined, DatabaseOutlined, ApiOutlined } from '@ant-design/icons';
 import { Edge, MarkerType, Node } from '@xyflow/react';
 import NodePanel from '../components/NodePanel';
@@ -1516,6 +1516,13 @@ const EditorPage = () => {
                 {/* LLM 节点配置 */}
                 {isLlmNodeType(selectedNodeType) && (
                   <Form layout="vertical" className="workflow-config-form">
+                    <Alert
+                      className="workflow-form-example"
+                      type="info"
+                      showIcon
+                      message="没配置过？看这里"
+                      description="最简单的跑法：不选「全局配置」，直接在下面手填供应商=DeepSeek、API 地址=https://api.deepseek.com、模型名称=deepseek-chat，密钥去 platform.deepseek.com 申请。提示词模板里用 {{参数名}} 引用输入，比如「请回答用户的问题：{{user_input}}」。如果同一个 Key 要在多个节点里重复用，去顶部「模型管理」建一条全局配置，这里选它就不用每次都填。"
+                    />
                     {/* 输入参数配置 */}
                     <div className="workflow-config-section">
                       <div className="workflow-config-section-header">
@@ -1943,6 +1950,13 @@ const EditorPage = () => {
                 {/* TTS 节点配置 (超拟人音频) */}
                 {selectedNode.data?.type === 'tts' && (
                   <Form layout="vertical" className="workflow-config-form">
+                    <Alert
+                      className="workflow-form-example"
+                      type="info"
+                      showIcon
+                      message="示例：用通义千问把文字念出来"
+                      description="供应商选「通义千问」，API 地址填 https://dashscope.aliyuncs.com/api/v1，API Key 在阿里云百炼控制台领取，模型名称填 qwen3-tts-flash，音色随便选一个比如 Cherry。上面「输入配置」里加一个 text 参数、引用上一个节点的回答文本，就能把大模型的答案转成语音。"
+                    />
                     {/* 输入配置 */}
                     <div className="workflow-config-section">
                       <div className="workflow-config-section-header">
@@ -2275,6 +2289,24 @@ const EditorPage = () => {
 	                {/* Agent Plan / Harness 节点配置 */}
 	                {isAgentPlanNode && (
 	                  <Form layout="vertical" className="workflow-config-form">
+                    {selectedNodeType === 'image_generate' && (
+                      <Alert
+                        className="workflow-form-example"
+                        type="info"
+                        showIcon
+                        message="示例：接一个真的能出图的配置"
+                        description="供应商选「阶跃星辰」比较好申请，API 地址填 https://api.stepfun.com/v1，API Key 去阶跃星辰开放平台领取，模型覆盖填 step-1x-medium。下面「图片提示词」里已经放了一个可以直接用的示例，改改主体描述就能跑。"
+                      />
+                    )}
+                    {selectedNodeType === 'video_generate' && (
+                      <Alert
+                        className="workflow-form-example"
+                        type="info"
+                        showIcon
+                        message="示例：接一个真的能出视频的配置"
+                        description="目前视频生成走的是火山方舟（豆包 Seedance），全局配置里选一个已经建好的火山方舟配置最省事；没有的话去顶部「模型管理」新建一个，供应商选火山方舟 Agent Plan，API Key 在火山引擎控制台领取。下面「视频提示词」里已经放了一个可以直接用的示例。"
+                      />
+                    )}
                     <Form.Item label={selectedNodeType === 'image_generate' ? '图片生成全局配置' : 'Agent Plan 全局配置'}>
                       <Select
                         value={(selectedNode.data?.configId as number) || undefined}

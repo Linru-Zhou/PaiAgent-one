@@ -426,6 +426,16 @@ select {
   background: #fff7ed;
 }
 
+.workflow-form-example {
+  margin-bottom: 16px;
+  font-size: 12px;
+}
+
+.workflow-form-example .ant-alert-description {
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .workflow-config-summary {
   margin-bottom: 12px;
   padding: 12px;
