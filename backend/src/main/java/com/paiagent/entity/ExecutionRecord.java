@@ -57,6 +57,12 @@ public class ExecutionRecord {
      */
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime executedAt;
+
+    /**
+     * 最近更新时间，由数据库维护；RUNNING 状态下兼作心跳，用于回收僵尸执行
+     */
+    @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
+    private LocalDateTime updatedAt;
     
     /**
      * 逻辑删除标识

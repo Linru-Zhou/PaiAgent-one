@@ -19,6 +19,7 @@ import com.paiagent.mapper.ExecutionSnapshotMapper;
 import com.paiagent.mapper.ExecutionVariableMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -83,6 +84,11 @@ public class WorkflowEngine implements WorkflowExecutor {
             throw new IllegalArgumentException("执行记录不存在或不属于当前工作流");
         }
 
+        String observedStatus = record.getStatus();
+        if ("RUNNING".equals(observedStatus)) {
+            throw new ExecutionConflictException("该执行正在进行中，请勿重复提交");
+        }
+
         ResumeExecutionRequest resumeRequest = request != null ? request : new ResumeExecutionRequest();
         WorkflowConfig config = workflowConfigParser.parse(workflow.getFlowData());
         List<WorkflowNode> sortedNodes = dagParser.parse(config);
@@ -106,14 +112,18 @@ public class WorkflowEngine implements WorkflowExecutor {
                 startNodeId,
                 Boolean.TRUE.equals(resumeRequest.getSkipSuccessNodes())
         );
+
+        // 乐观锁：只有状态仍是刚才读到的值才允许接管，保证同一次执行同一时刻只有一个请求在跑
+        if (executionRecordMapper.casStatus(executionId, observedStatus, "RUNNING") == 0) {
+            throw new ExecutionConflictException("该执行已被其他请求接管，请刷新后重试");
+        }
+        record.setStatus("RUNNING");
+        record.setErrorMessage(null);
+
         resumeState.modifiedVariables = resumeRequest.getModifiedVariables() != null
                 ? new LinkedHashMap<>(resumeRequest.getModifiedVariables())
                 : Collections.emptyMap();
         saveModifiedVariables(executionId, resumeState.modifiedVariables);
-
-        record.setStatus("RUNNING");
-        record.setErrorMessage(null);
-        executionRecordMapper.updateById(record);
 
         long startTime = System.currentTimeMillis();
         if (eventCallback != null) {
@@ -231,6 +241,7 @@ public class WorkflowEngine implements WorkflowExecutor {
                     long nodeEndTime = System.currentTimeMillis();
                     nodeResult.setDuration((int) (nodeEndTime - nodeStartTime));
                     nodeResults.add(nodeResult);
+                    heartbeat(record.getId());
                 }
             }
             
@@ -417,14 +428,30 @@ public class WorkflowEngine implements WorkflowExecutor {
             snapshot.setExecutionId(executionId);
             snapshot.setFlowId(flowId);
             snapshot.setNodeId(node.getId());
-            snapshot.setNodeType(node.getType());
-            snapshot.setNodeName(resolveNodeName(node));
             snapshot.setRetryCount(0);
-            snapshot.setExecutionOrder(executionOrder);
-        } else {
-            snapshot.setRetryCount(snapshot.getRetryCount() == null ? 1 : snapshot.getRetryCount() + 1);
+            applySnapshotStart(snapshot, node, nodeInput, executionOrder);
+            try {
+                executionSnapshotMapper.insert(snapshot);
+                return snapshot;
+            } catch (DuplicateKeyException e) {
+                // 唯一约束 (execution_id, node_id) 兜底：并发下别人先插入了，改为更新那一条
+                snapshot = executionSnapshotMapper.selectByExecutionIdAndNodeId(executionId, node.getId());
+                if (snapshot == null) {
+                    throw e;
+                }
+            }
         }
 
+        snapshot.setRetryCount(snapshot.getRetryCount() == null ? 1 : snapshot.getRetryCount() + 1);
+        applySnapshotStart(snapshot, node, nodeInput, executionOrder);
+        executionSnapshotMapper.updateById(snapshot);
+        return snapshot;
+    }
+
+    private void applySnapshotStart(ExecutionSnapshot snapshot,
+                                    WorkflowNode node,
+                                    Map<String, Object> nodeInput,
+                                    int executionOrder) {
         snapshot.setNodeType(node.getType());
         snapshot.setNodeName(resolveNodeName(node));
         snapshot.setExecutionOrder(executionOrder);
@@ -435,13 +462,17 @@ public class WorkflowEngine implements WorkflowExecutor {
         snapshot.setStartedAt(LocalDateTime.now());
         snapshot.setCompletedAt(null);
         snapshot.setDuration(null);
+    }
 
-        if (snapshot.getId() == null) {
-            executionSnapshotMapper.insert(snapshot);
-        } else {
-            executionSnapshotMapper.updateById(snapshot);
+    private void heartbeat(Long executionId) {
+        if (executionId == null) {
+            return;
         }
-        return snapshot;
+        try {
+            executionRecordMapper.touch(executionId);
+        } catch (Exception e) {
+            log.debug("刷新执行心跳失败: {}", executionId, e);
+        }
     }
 
     private void markSnapshotSuccess(ExecutionSnapshot snapshot,

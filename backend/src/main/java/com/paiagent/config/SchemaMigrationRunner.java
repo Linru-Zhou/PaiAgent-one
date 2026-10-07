@@ -167,6 +167,13 @@ public class SchemaMigrationRunner implements ApplicationRunner {
                 "ALTER TABLE llm_global_config ADD COLUMN video_model VARCHAR(100) DEFAULT NULL COMMENT '默认视频生成模型' AFTER image_model");
         addColumnIfMissing("llm_global_config", "memory_enabled",
                 "ALTER TABLE llm_global_config ADD COLUMN memory_enabled TINYINT DEFAULT 0 COMMENT '是否启用Agent Plan记忆能力' AFTER video_model");
+        addColumnIfMissing("execution_record", "updated_at",
+                "ALTER TABLE execution_record ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP "
+                        + "ON UPDATE CURRENT_TIMESTAMP COMMENT '最近更新时间(兼作执行心跳)'");
+        addIndexIfMissing("execution_record", "idx_status_updated", "ALTER TABLE execution_record ADD INDEX idx_status_updated (status, updated_at)");
+        dedupeExecutionSnapshots();
+        addIndexIfMissing("execution_snapshot", "uk_execution_node",
+                "ALTER TABLE execution_snapshot ADD UNIQUE KEY uk_execution_node (execution_id, node_id)");
         addColumnIfMissing("knowledge_chunk", "document_id",
                 "ALTER TABLE knowledge_chunk ADD COLUMN document_id BIGINT DEFAULT NULL COMMENT '知识文档 ID' AFTER knowledge_base_id");
         addColumnIfMissing("knowledge_chunk", "chunk_index",
@@ -189,6 +196,43 @@ public class SchemaMigrationRunner implements ApplicationRunner {
         }
         jdbcTemplate.execute(ddl);
         log.info("Schema migrated: created {}", tableName);
+    }
+
+    private void addIndexIfMissing(String tableName, String indexName, String ddl) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = ?
+                  AND INDEX_NAME = ?
+                """, Integer.class, tableName, indexName);
+        if (count != null && count > 0) {
+            return;
+        }
+        jdbcTemplate.execute(ddl);
+        log.info("Schema migrated: added index {}.{}", tableName, indexName);
+    }
+
+    /** 加唯一约束前先清理历史重复快照，同一 (execution_id, node_id) 只保留最新一条。 */
+    private void dedupeExecutionSnapshots() {
+        Integer indexed = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'execution_snapshot'
+                  AND INDEX_NAME = 'uk_execution_node'
+                """, Integer.class);
+        if (indexed != null && indexed > 0) {
+            return;
+        }
+        int removed = jdbcTemplate.update("""
+                DELETE s1 FROM execution_snapshot s1
+                JOIN execution_snapshot s2
+                  ON s1.execution_id = s2.execution_id AND s1.node_id = s2.node_id AND s1.id < s2.id
+                """);
+        if (removed > 0) {
+            log.warn("Schema migrated: removed {} duplicate execution_snapshot rows", removed);
+        }
     }
 
     private void addColumnIfMissing(String tableName, String columnName, String ddl) {

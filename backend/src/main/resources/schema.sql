@@ -44,11 +44,13 @@ CREATE TABLE IF NOT EXISTS execution_record (
     error_message TEXT COMMENT '错误信息',
     duration INT COMMENT '执行耗时(毫秒)',
     executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '执行时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近更新时间(兼作执行心跳)',
     deleted TINYINT DEFAULT 0 COMMENT '逻辑删除标识(0-未删除,1-已删除)',
     INDEX idx_flow_id (flow_id),
     INDEX idx_flow_latest (flow_id, id),
     INDEX idx_executed_at (executed_at),
-    INDEX idx_status (status)
+    INDEX idx_status (status),
+    INDEX idx_status_updated (status, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='执行记录表';
 
 -- 执行快照表（断点续执行）
@@ -70,6 +72,7 @@ CREATE TABLE IF NOT EXISTS execution_snapshot (
     execution_order INT DEFAULT 0 COMMENT '执行顺序',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY uk_execution_node (execution_id, node_id),
     INDEX idx_execution_id (execution_id),
     INDEX idx_flow_id (flow_id),
     INDEX idx_node_id (node_id),

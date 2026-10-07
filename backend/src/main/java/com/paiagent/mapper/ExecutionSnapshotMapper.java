@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.paiagent.entity.ExecutionSnapshot;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Update;
 import java.util.List;
 
 /**
@@ -25,6 +26,11 @@ public interface ExecutionSnapshotMapper extends BaseMapper<ExecutionSnapshot> {
         @Param("nodeId") String nodeId
     );
     
+    /** 把某次执行里仍处于 RUNNING 的节点快照标记为 FAILED（用于回收僵尸执行）。 */
+    @Update("UPDATE execution_snapshot SET status = 'FAILED', error_message = #{message}, completed_at = CURRENT_TIMESTAMP "
+            + "WHERE execution_id = #{executionId} AND status = 'RUNNING'")
+    int failRunningByExecutionId(@Param("executionId") Long executionId, @Param("message") String message);
+
     /**
      * 根据执行记录 ID 删除快照
      */

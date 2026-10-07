@@ -10,6 +10,7 @@ import com.paiagent.dto.ExecutionSnapshotResponse;
 import com.paiagent.dto.ExecutionVariableResponse;
 import com.paiagent.dto.ResumeExecutionRequest;
 import com.paiagent.engine.EngineSelector;
+import com.paiagent.engine.ExecutionConflictException;
 import com.paiagent.engine.WorkflowExecutor;
 import com.paiagent.engine.WorkflowEngine;
 import com.paiagent.entity.ExecutionRecord;
@@ -158,6 +159,8 @@ public class ExecutionController {
             }
             ExecutionResponse response = workflowEngine.resumeExecution(workflow, executionId, request, null);
             return Result.success(response);
+        } catch (ExecutionConflictException e) {
+            return Result.error(409, e.getMessage());
         } catch (Exception e) {
             log.error("断点续执行失败", e);
             return Result.error("断点续执行失败: " + e.getMessage());
