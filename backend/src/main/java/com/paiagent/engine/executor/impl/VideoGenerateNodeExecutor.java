@@ -78,12 +78,14 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
         }
 
         Map<String, Object> task = Map.of("status", "running");
+        boolean succeeded = false;
         for (int i = 0; i < MAX_POLLS; i++) {
             emit(node, progressCallback, "视频生成中", Map.of("taskId", taskId, "poll", i + 1));
             Thread.sleep(pollIntervalMs);
             task = agentPlanClient.getVideoTask(config, taskId);
             String status = String.valueOf(task.getOrDefault("status", ""));
             if (isSuccess(status)) {
+                succeeded = true;
                 break;
             }
             if (isFailed(status)) {
@@ -93,7 +95,7 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
 
         String videoUrl = asText(task.get("videoUrl"));
         String coverUrl = asText(task.get("coverUrl"));
-        if (!StringUtils.hasText(videoUrl)) {
+        if (!succeeded || !StringUtils.hasText(videoUrl)) {
             throw new IllegalStateException("视频生成超时或未返回 videoUrl: " + task);
         }
 
@@ -119,7 +121,8 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
 
     private boolean isFailed(String status) {
         String normalized = status.toLowerCase();
-        return normalized.contains("fail") || normalized.contains("error") || normalized.contains("cancel");
+        return normalized.contains("fail") || normalized.contains("error") || normalized.contains("cancel")
+                || normalized.contains("expire");
     }
 
     private String persistMedia(String sourceUrl, String objectName, String contentType) {

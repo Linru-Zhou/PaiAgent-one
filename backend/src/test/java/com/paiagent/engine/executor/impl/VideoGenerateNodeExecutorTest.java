@@ -221,7 +221,7 @@ class VideoGenerateNodeExecutorTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"failed", "FAILED", "error", "cancelled"})
+    @ValueSource(strings = {"failed", "FAILED", "error", "cancelled", "expired"})
     void execute_TerminalFailureStatus_ThrowsWithoutFurtherPolling(String status) throws Exception {
         givenTaskCreated(TASK_ID);
         when(agentPlanClient.getVideoTask(config, TASK_ID)).thenReturn(Map.of("status", status, "error", "internal error"));
@@ -271,6 +271,22 @@ class VideoGenerateNodeExecutorTest {
         verify(agentPlanClient, times(MAX_POLLS)).getVideoTask(config, TASK_ID);
         // submit + one event per poll, and nothing is persisted
         verify(progressCallback, times(MAX_POLLS + 1)).accept(any(ExecutionEvent.class));
+        verifyNoInteractions(minioService);
+    }
+
+    @Test
+    void execute_StillRunningAfterMaxPollsEvenWithUrl_TimesOutInsteadOfPersisting() throws Exception {
+        // VolcengineAgentPlanClient.findString falls back to any nested "url", so a task that never
+        // reached a success status can still carry a non-blank videoUrl (e.g. an echoed reference image).
+        givenTaskCreated(TASK_ID);
+        when(agentPlanClient.getVideoTask(config, TASK_ID))
+                .thenReturn(Map.of("status", "running", "videoUrl", "https://origin.example/not-a-video.png"));
+
+        IllegalStateException exception = assertThrows(IllegalStateException.class,
+                () -> executor.execute(node, Map.of("prompt", "running with url"), progressCallback));
+
+        assertTrue(exception.getMessage().contains("视频生成超时或未返回 videoUrl"));
+        verify(agentPlanClient, times(MAX_POLLS)).getVideoTask(config, TASK_ID);
         verifyNoInteractions(minioService);
     }
 
