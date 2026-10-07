@@ -49,11 +49,13 @@ class ConditionBranchRoutingTest {
                 new SimpleOutputNodeExecutor("branchDefault")
         );
         NodeExecutorFactory factory = new NodeExecutorFactory(executors);
-        ReflectionTestUtils.setField(engine, "executorFactory", factory);
 
         executionRecordMapper = mock(ExecutionRecordMapper.class);
         when(executionRecordMapper.insert(any(ExecutionRecord.class))).thenReturn(1);
         ReflectionTestUtils.setField(engine, "executionRecordMapper", executionRecordMapper);
+        ExecutionRecorder recorder = new ExecutionRecorder(executionRecordMapper, null);
+        ReflectionTestUtils.setField(engine, "recorder", recorder);
+        ReflectionTestUtils.setField(engine, "nodeRunner", new NodeRunner(factory, recorder));
     }
 
     @Test

@@ -62,6 +62,9 @@ public class ExecutionController {
     private ExecutionDispatcher dispatcher;
 
     @Autowired
+    private WorkflowEngine workflowEngine;
+
+    @Autowired
     private ExecutionRecordMapper executionRecordMapper;
 
     @Autowired
@@ -261,10 +264,7 @@ public class ExecutionController {
         }
 
         try {
-            WorkflowExecutor executor = engineSelector.selectEngine(workflow);
-            if (!(executor instanceof WorkflowEngine workflowEngine)) {
-                return Result.error("当前执行引擎暂不支持断点续执行");
-            }
+            // 快照是引擎无关的：无论这次执行最初由哪个引擎跑的，续跑都由 DAG 调度器基于快照完成
             ExecutionResponse response = workflowEngine.resumeExecution(workflow, executionId, request, null);
             return Result.success(response);
         } catch (ExecutionConflictException e) {

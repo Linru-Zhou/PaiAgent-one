@@ -4,12 +4,13 @@ import com.alibaba.fastjson2.JSON;
 import com.paiagent.dto.ExecutionEvent;
 import com.paiagent.dto.ExecutionResponse;
 import com.paiagent.dto.ResumeExecutionRequest;
+import com.paiagent.engine.NodeRunner.NodeRun;
 import com.paiagent.engine.dag.DAGParser;
-import com.paiagent.engine.executor.NodeExecutor;
-import com.paiagent.engine.executor.NodeExecutorFactory;
 import com.paiagent.engine.model.WorkflowConfig;
 import com.paiagent.engine.model.WorkflowEdge;
 import com.paiagent.engine.model.WorkflowNode;
+import com.paiagent.engine.support.ExecutionSupport;
+import com.paiagent.engine.support.ExecutionSupport.EdgeIndexes;
 import com.paiagent.entity.ExecutionRecord;
 import com.paiagent.entity.ExecutionSnapshot;
 import com.paiagent.entity.ExecutionVariable;
@@ -21,32 +22,39 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
+import static com.paiagent.engine.support.ExecutionSupport.parseJsonObject;
+import static com.paiagent.engine.support.ExecutionSupport.stripRuntimeFields;
+import static com.paiagent.engine.support.ExecutionSupport.toJson;
+
+/**
+ * DAG 引擎：自研的拓扑排序 + 按依赖层并发调度。
+ * 节点输入解析、条件路由、单节点执行/快照/事件都复用 {@link ExecutionSupport}、{@link NodeRunner}、{@link ExecutionRecorder}，
+ * 与 LangGraph 引擎共用同一份实现。
+ */
 @Slf4j
 @Service
 public class WorkflowEngine implements WorkflowExecutor {
 
-    /** 只在运行时传递、不应该写进快照/执行记录/输出的字段 */
-    private static final Set<String> RUNTIME_ONLY_KEYS = Set.of("__nodeOutputs__", "__executionId__", "__idempotencyKey__");
-    
     @Autowired
     private DAGParser dagParser;
 
     @Autowired
     private WorkflowConfigParser workflowConfigParser;
-    
+
     @Autowired
-    private NodeExecutorFactory executorFactory;
-    
+    private ExecutionRecorder recorder;
+
+    @Autowired
+    private NodeRunner nodeRunner;
+
     @Autowired
     private ExecutionRecordMapper executionRecordMapper;
 
@@ -64,21 +72,21 @@ public class WorkflowEngine implements WorkflowExecutor {
     /** 是否并发执行同一层互不依赖的节点（运维开关，出问题时可一键退回串行） */
     @Value("${paiagent.engine.parallel-enabled:true}")
     private boolean parallelEnabled = true;
-    
+
     @Override
     public ExecutionResponse execute(Workflow workflow, String inputData) {
         return executeWithCallback(workflow, inputData, null);
     }
-    
+
     @Override
     public ExecutionResponse executeWithCallback(Workflow workflow, String inputData, Consumer<ExecutionEvent> eventCallback) {
         long startTime = System.currentTimeMillis();
-        
+
         WorkflowConfig config = workflowConfigParser.parse(workflow.getFlowData());
         List<WorkflowNode> sortedNodes = dagParser.parse(config);
         List<WorkflowEdge> edges = config.getEdges() != null ? config.getEdges() : new ArrayList<>();
-        EdgeIndexes indexes = buildEdgeIndexes(edges);
-        ExecutionRecord record = createRunningRecord(workflow.getId(), inputData);
+        EdgeIndexes indexes = EdgeIndexes.of(edges);
+        ExecutionRecord record = recorder.start(workflow.getId(), inputData);
 
         if (eventCallback != null) {
             eventCallback.accept(ExecutionEvent.workflowStart(record.getId()));
@@ -87,6 +95,9 @@ public class WorkflowEngine implements WorkflowExecutor {
         return executeNodes(record, workflow.getId(), inputData, sortedNodes, indexes, new ResumeState(), startTime, eventCallback);
     }
 
+    /**
+     * 断点续执行。快照是引擎无关的，所以不管这次执行最初是 DAG 引擎还是 LangGraph 引擎跑的，都可以用这里续跑。
+     */
     public ExecutionResponse resumeExecution(Workflow workflow,
                                              Long executionId,
                                              ResumeExecutionRequest request,
@@ -109,7 +120,7 @@ public class WorkflowEngine implements WorkflowExecutor {
         WorkflowConfig config = workflowConfigParser.parse(workflow.getFlowData());
         List<WorkflowNode> sortedNodes = dagParser.parse(config);
         List<WorkflowEdge> edges = config.getEdges() != null ? config.getEdges() : new ArrayList<>();
-        EdgeIndexes indexes = buildEdgeIndexes(edges);
+        EdgeIndexes indexes = EdgeIndexes.of(edges);
 
         List<ExecutionSnapshot> snapshots = executionSnapshotMapper.selectByExecutionId(executionId);
         Map<String, ExecutionSnapshot> snapshotsByNode = snapshots.stream()
@@ -160,8 +171,8 @@ public class WorkflowEngine implements WorkflowExecutor {
                                            Consumer<ExecutionEvent> rawEventCallback) {
         // 并发执行的节点会从不同线程回调事件，而 SseEmitter 不是线程安全的，这里统一串行化
         Consumer<ExecutionEvent> eventCallback = synchronizedCallback(rawEventCallback);
-        Map<String, List<WorkflowEdge>> edgesBySource = indexes.edgesBySource;
-        Map<String, List<WorkflowEdge>> edgesByTarget = indexes.edgesByTarget;
+        Map<String, List<WorkflowEdge>> edgesBySource = indexes.bySource();
+        Map<String, List<WorkflowEdge>> edgesByTarget = indexes.byTarget();
 
         List<ExecutionResponse.NodeResult> nodeResults = new ArrayList<>(resumeState.restoredNodeResults);
         Map<String, Map<String, Object>> nodeOutputs = new HashMap<>(resumeState.nodeOutputs);
@@ -184,7 +195,7 @@ public class WorkflowEngine implements WorkflowExecutor {
 
         try {
             // 按依赖层推进：同一层的节点互不依赖，可以并发；每层结束后再统一处理结果和条件分支路由
-            for (List<WorkflowNode> level : dagParser.groupIntoLevels(sortedNodes, indexes.edges)) {
+            for (List<WorkflowNode> level : dagParser.groupIntoLevels(sortedNodes, indexes.edges())) {
                 List<WorkflowNode> runnable = new ArrayList<>();
                 for (WorkflowNode node : level) {
                     if (sortedIndex.get(node.getId()) < startIndex) {
@@ -225,7 +236,7 @@ public class WorkflowEngine implements WorkflowExecutor {
                     // 条件分支路由
                     if ("condition".equals(run.node.getType())) {
                         String selectedBranch = (String) run.rawOutput.get("__selectedBranch__");
-                        markSkippedNodes(run.node.getId(), selectedBranch, edgesBySource, edgesByTarget, skippedNodes);
+                        ExecutionSupport.markSkippedNodes(run.node.getId(), selectedBranch, edgesBySource, edgesByTarget, skippedNodes);
                     }
                 }
                 if (failed != null) {
@@ -255,17 +266,10 @@ public class WorkflowEngine implements WorkflowExecutor {
             eventCallback.accept(ExecutionEvent.workflowComplete(status, currentInput, duration));
         }
 
-        record.setFlowId(flowId);
-        String inputDataJson = buildInputDataJson(inputData);
+        String inputDataJson = ExecutionRecorder.buildInputDataJson(inputData);
         log.info("保存执行记录 - inputData: {}", inputDataJson);
         log.info("保存执行记录 - outputData: {}", outputData);
-        record.setInputData(inputDataJson);
-        record.setOutputData(outputData);
-        record.setStatus(status);
-        record.setNodeResults(toJson(nodeResults));
-        record.setErrorMessage(errorMessage);
-        record.setDuration(duration);
-        executionRecordMapper.updateById(record);
+        recorder.finish(record, flowId, inputData, status, outputData, toJson(nodeResults), errorMessage, duration);
 
         ExecutionResponse response = new ExecutionResponse();
         response.setExecutionId(record.getId());
@@ -290,7 +294,8 @@ public class WorkflowEngine implements WorkflowExecutor {
                                    Consumer<ExecutionEvent> eventCallback) {
         Map<WorkflowNode, Map<String, Object>> inputs = new LinkedHashMap<>();
         for (WorkflowNode node : runnable) {
-            Map<String, Object> nodeInput = new LinkedHashMap<>(resolveNodeInput(node, outputsSnapshot, edgesByTarget, fallbackSnapshot));
+            Map<String, Object> nodeInput = new LinkedHashMap<>(
+                    ExecutionSupport.resolveNodeInput(node, outputsSnapshot, edgesByTarget, fallbackSnapshot));
             if (!resumeState.modifiedVariables.isEmpty()) {
                 nodeInput.putAll(resumeState.modifiedVariables);
             }
@@ -304,7 +309,7 @@ public class WorkflowEngine implements WorkflowExecutor {
         boolean parallel = parallelEnabled && nodePool != null && runnable.size() > 1;
         if (!parallel) {
             for (WorkflowNode node : runnable) {
-                runs.add(runSingleNode(record, flowId, node, inputs.get(node), sortedIndex.get(node.getId()), eventCallback));
+                runs.add(nodeRunner.run(record, flowId, node, inputs.get(node), sortedIndex.get(node.getId()), eventCallback));
             }
             return runs;
         }
@@ -316,74 +321,12 @@ public class WorkflowEngine implements WorkflowExecutor {
             Map<String, Object> nodeInput = inputs.get(node);
             int order = sortedIndex.get(node.getId());
             futures.add(CompletableFuture.supplyAsync(
-                    () -> runSingleNode(record, flowId, node, nodeInput, order, eventCallback), nodePool));
+                    () -> nodeRunner.run(record, flowId, node, nodeInput, order, eventCallback), nodePool));
         }
         for (CompletableFuture<NodeRun> future : futures) {
             runs.add(future.join());
         }
         return runs;
-    }
-
-    /** 执行单个节点：写快照、发事件、调执行器；任何异常都收敛成结果返回，不向外抛，保证同层兄弟节点不受影响。 */
-    private NodeRun runSingleNode(ExecutionRecord record,
-                                  Long flowId,
-                                  WorkflowNode node,
-                                  Map<String, Object> nodeInput,
-                                  int executionOrder,
-                                  Consumer<ExecutionEvent> eventCallback) {
-        long nodeStartTime = System.currentTimeMillis();
-        ExecutionResponse.NodeResult nodeResult = new ExecutionResponse.NodeResult();
-        nodeResult.setNodeId(node.getId());
-        nodeResult.setNodeName(node.getType());
-        nodeResult.setInput(toJson(stripRuntimeFields(nodeInput)));
-
-        Map<String, Object> rawOutput = null;
-        Map<String, Object> output = null;
-        Exception error = null;
-        ExecutionSnapshot snapshot = null;
-        try {
-            snapshot = createOrUpdateSnapshotStart(record.getId(), flowId, node, nodeInput, executionOrder, nodeStartTime);
-
-            if (eventCallback != null) {
-                eventCallback.accept(ExecutionEvent.nodeStart(node.getId(), node.getType()));
-            }
-
-            NodeExecutor executor = executorFactory.getExecutor(node.getType());
-            rawOutput = executor.execute(node, nodeInput, eventCallback);
-            output = stripRuntimeFields(rawOutput);
-
-            nodeResult.setStatus("SUCCESS");
-            nodeResult.setOutput(toJson(output));
-
-            long nodeEndTime = System.currentTimeMillis();
-            int nodeDuration = (int) (nodeEndTime - nodeStartTime);
-            nodeResult.setDuration(nodeDuration);
-            markSnapshotSuccess(snapshot, output, nodeDuration, nodeEndTime);
-
-            if (eventCallback != null) {
-                Map<String, Object> eventData = new HashMap<>();
-                eventData.put("input", stripRuntimeFields(nodeInput));
-                eventData.put("output", output);
-                eventData.put("duration", nodeDuration);
-                eventCallback.accept(ExecutionEvent.nodeSuccess(node.getId(), node.getType(), eventData, nodeDuration));
-            }
-        } catch (Exception e) {
-            log.error("节点执行失败: {}", node.getId(), e);
-            error = e;
-            output = null;
-            nodeResult.setStatus("FAILED");
-            nodeResult.setOutput(null);
-            nodeResult.setError(e.getMessage());
-            markSnapshotFailed(snapshot, e.getMessage(), (int) (System.currentTimeMillis() - nodeStartTime));
-
-            if (eventCallback != null) {
-                eventCallback.accept(ExecutionEvent.nodeError(node.getId(), node.getType(), e.getMessage()));
-            }
-        } finally {
-            nodeResult.setDuration((int) (System.currentTimeMillis() - nodeStartTime));
-            heartbeat(record.getId());
-        }
-        return new NodeRun(node, nodeResult, output, rawOutput, error);
     }
 
     private Consumer<ExecutionEvent> synchronizedCallback(Consumer<ExecutionEvent> callback) {
@@ -401,217 +344,6 @@ public class WorkflowEngine implements WorkflowExecutor {
     @Override
     public String getEngineType() {
         return "dag";
-    }
-    
-    /**
-     * 解析节点输入：如果存在已执行的前驱节点输出，使用前驱节点输出作为输入
-     */
-    private Map<String, Object> resolveNodeInput(WorkflowNode node,
-                                                   Map<String, Map<String, Object>> nodeOutputs,
-                                                   Map<String, List<WorkflowEdge>> edgesByTarget,
-                                                   Map<String, Object> fallbackInput) {
-        List<WorkflowEdge> incomingEdges = edgesByTarget.get(node.getId());
-        if (incomingEdges == null || incomingEdges.isEmpty()) {
-            return fallbackInput;
-        }
-        Map<String, Object> resolved = new LinkedHashMap<>();
-        for (WorkflowEdge edge : incomingEdges) {
-            Map<String, Object> sourceOutput = nodeOutputs.get(edge.getSource());
-            if (sourceOutput != null) {
-                resolved.putAll(sourceOutput);
-            }
-        }
-        if (resolved.isEmpty()) {
-            return fallbackInput;
-        }
-        resolved.put("__nodeOutputs__", nodeOutputs);
-        return resolved;
-    }
-    
-    /**
-     * 标记条件分支中未选中路径的所有下游节点为跳过状态
-     */
-    private void markSkippedNodes(String conditionNodeId,
-                                   String selectedBranch,
-                                   Map<String, List<WorkflowEdge>> edgesBySource,
-                                   Map<String, List<WorkflowEdge>> edgesByTarget,
-                                   Set<String> skippedNodes) {
-        List<WorkflowEdge> outEdges = edgesBySource.get(conditionNodeId);
-        if (outEdges == null || outEdges.isEmpty()) {
-            return;
-        }
-        
-        // 判断出边是否使用了 sourceHandle（分支标识）
-        boolean hasHandles = outEdges.stream().anyMatch(e -> e.getSourceHandle() != null);
-        if (!hasHandles) {
-            return;
-        }
-        
-        // 收集活跃和非活跃分支的直接目标
-        Set<String> activeTargets = new HashSet<>();
-        Set<String> inactiveTargets = new HashSet<>();
-        
-        for (WorkflowEdge edge : outEdges) {
-            String handle = edge.getSourceHandle();
-            if (handle != null && handle.equals(selectedBranch)) {
-                activeTargets.add(edge.getTarget());
-            } else if (handle == null && "default".equals(selectedBranch)) {
-                activeTargets.add(edge.getTarget());
-            } else {
-                inactiveTargets.add(edge.getTarget());
-            }
-        }
-        
-        // 递归标记非活跃分支下游节点
-        for (String target : inactiveTargets) {
-            if (!activeTargets.contains(target)) {
-                markDownstreamSkipped(target, skippedNodes, edgesBySource, edgesByTarget);
-            }
-        }
-    }
-    
-    /**
-     * 递归标记下游节点为跳过。仅当节点所有入边都来自已跳过节点时才标记。
-     */
-    private void markDownstreamSkipped(String nodeId,
-                                        Set<String> skippedNodes,
-                                        Map<String, List<WorkflowEdge>> edgesBySource,
-                                        Map<String, List<WorkflowEdge>> edgesByTarget) {
-        if (skippedNodes.contains(nodeId)) {
-            return;
-        }
-        
-        // 检查是否所有入边的源节点都已被跳过（或尚无输出）
-        List<WorkflowEdge> incomingEdges = edgesByTarget.get(nodeId);
-        if (incomingEdges != null && incomingEdges.size() > 1) {
-            for (WorkflowEdge edge : incomingEdges) {
-                if (!skippedNodes.contains(edge.getSource())) {
-                    // 有活跃路径可达此节点，不跳过
-                    return;
-                }
-            }
-        }
-        
-        skippedNodes.add(nodeId);
-        log.info("标记节点 [{}] 为跳过（条件分支未选中路径）", nodeId);
-        
-        // 递归标记下游
-        List<WorkflowEdge> outEdges = edgesBySource.get(nodeId);
-        if (outEdges != null) {
-            for (WorkflowEdge edge : outEdges) {
-                markDownstreamSkipped(edge.getTarget(), skippedNodes, edgesBySource, edgesByTarget);
-            }
-        }
-    }
-
-    private ExecutionRecord createRunningRecord(Long flowId, String inputData) {
-        ExecutionRecord record = new ExecutionRecord();
-        record.setFlowId(flowId);
-        record.setInputData(buildInputDataJson(inputData));
-        record.setStatus("RUNNING");
-        record.setNodeResults("[]");
-        record.setDuration(0);
-        executionRecordMapper.insert(record);
-        return record;
-    }
-
-    private EdgeIndexes buildEdgeIndexes(List<WorkflowEdge> edges) {
-        Map<String, List<WorkflowEdge>> edgesBySource = new HashMap<>();
-        Map<String, List<WorkflowEdge>> edgesByTarget = new HashMap<>();
-        for (WorkflowEdge edge : edges) {
-            edgesBySource.computeIfAbsent(edge.getSource(), k -> new ArrayList<>()).add(edge);
-            edgesByTarget.computeIfAbsent(edge.getTarget(), k -> new ArrayList<>()).add(edge);
-        }
-        return new EdgeIndexes(edges, edgesBySource, edgesByTarget);
-    }
-
-    private ExecutionSnapshot createOrUpdateSnapshotStart(Long executionId,
-                                                           Long flowId,
-                                                           WorkflowNode node,
-                                                           Map<String, Object> nodeInput,
-                                                           int executionOrder,
-                                                           long startedAtMillis) {
-        if (executionSnapshotMapper == null || executionId == null) {
-            return null;
-        }
-
-        ExecutionSnapshot snapshot = executionSnapshotMapper.selectByExecutionIdAndNodeId(executionId, node.getId());
-        if (snapshot == null) {
-            snapshot = new ExecutionSnapshot();
-            snapshot.setExecutionId(executionId);
-            snapshot.setFlowId(flowId);
-            snapshot.setNodeId(node.getId());
-            snapshot.setRetryCount(0);
-            applySnapshotStart(snapshot, node, nodeInput, executionOrder);
-            try {
-                executionSnapshotMapper.insert(snapshot);
-                return snapshot;
-            } catch (DuplicateKeyException e) {
-                // 唯一约束 (execution_id, node_id) 兜底：并发下别人先插入了，改为更新那一条
-                snapshot = executionSnapshotMapper.selectByExecutionIdAndNodeId(executionId, node.getId());
-                if (snapshot == null) {
-                    throw e;
-                }
-            }
-        }
-
-        snapshot.setRetryCount(snapshot.getRetryCount() == null ? 1 : snapshot.getRetryCount() + 1);
-        applySnapshotStart(snapshot, node, nodeInput, executionOrder);
-        executionSnapshotMapper.updateById(snapshot);
-        return snapshot;
-    }
-
-    private void applySnapshotStart(ExecutionSnapshot snapshot,
-                                    WorkflowNode node,
-                                    Map<String, Object> nodeInput,
-                                    int executionOrder) {
-        snapshot.setNodeType(node.getType());
-        snapshot.setNodeName(resolveNodeName(node));
-        snapshot.setExecutionOrder(executionOrder);
-        snapshot.setStatus("RUNNING");
-        snapshot.setInputData(toJson(stripRuntimeFields(nodeInput)));
-        snapshot.setOutputData(null);
-        snapshot.setErrorMessage(null);
-        snapshot.setStartedAt(LocalDateTime.now());
-        snapshot.setCompletedAt(null);
-        snapshot.setDuration(null);
-    }
-
-    private void heartbeat(Long executionId) {
-        if (executionId == null) {
-            return;
-        }
-        try {
-            executionRecordMapper.touch(executionId);
-        } catch (Exception e) {
-            log.debug("刷新执行心跳失败: {}", executionId, e);
-        }
-    }
-
-    private void markSnapshotSuccess(ExecutionSnapshot snapshot,
-                                     Map<String, Object> output,
-                                     int duration,
-                                     long completedAtMillis) {
-        if (executionSnapshotMapper == null || snapshot == null || snapshot.getId() == null) {
-            return;
-        }
-        snapshot.setStatus("SUCCESS");
-        snapshot.setOutputData(toJson(stripRuntimeFields(output)));
-        snapshot.setErrorMessage(null);
-        snapshot.setCompletedAt(LocalDateTime.now());
-        snapshot.setDuration(duration);
-        executionSnapshotMapper.updateById(snapshot);
-    }
-
-    private void markSnapshotFailed(ExecutionSnapshot snapshot, String errorMessage, int duration) {
-        if (executionSnapshotMapper == null || snapshot == null || snapshot.getId() == null) {
-            return;
-        }
-        snapshot.setStatus("FAILED");
-        snapshot.setErrorMessage(errorMessage);
-        snapshot.setCompletedAt(LocalDateTime.now());
-        snapshot.setDuration(duration);
-        executionSnapshotMapper.updateById(snapshot);
     }
 
     private String resolveResumeStartNodeId(List<WorkflowNode> sortedNodes,
@@ -684,7 +416,7 @@ public class WorkflowEngine implements WorkflowExecutor {
                 String selectedBranch = output.get("__selectedBranch__") instanceof String
                         ? (String) output.get("__selectedBranch__")
                         : "default";
-                markSkippedNodes(node.getId(), selectedBranch, indexes.edgesBySource, indexes.edgesByTarget, state.skippedNodes);
+                ExecutionSupport.markSkippedNodes(node.getId(), selectedBranch, indexes.bySource(), indexes.byTarget(), state.skippedNodes);
             }
         }
 
@@ -762,117 +494,10 @@ public class WorkflowEngine implements WorkflowExecutor {
         return "STRING";
     }
 
-    private String resolveNodeName(WorkflowNode node) {
-        if (node.getData() != null) {
-            Object label = node.getData().get("label");
-            if (label instanceof String && !((String) label).isBlank()) {
-                return (String) label;
-            }
-        }
-        return node.getType();
-    }
-
-    private String buildInputDataJson(String inputData) {
-        Map<String, Object> inputDataMap = new HashMap<>();
-        inputDataMap.put("input", inputData);
-        return toJson(inputDataMap);
-    }
-
     private String extractInputValue(String inputDataJson) {
         Map<String, Object> input = parseJsonObject(inputDataJson);
         Object inputValue = input.get("input");
         return inputValue != null ? String.valueOf(inputValue) : "";
-    }
-
-    private Map<String, Object> parseJsonObject(String json) {
-        if (json == null || json.isBlank()) {
-            return new LinkedHashMap<>();
-        }
-        try {
-            return new LinkedHashMap<>(JSON.parseObject(json));
-        } catch (Exception e) {
-            return new LinkedHashMap<>();
-        }
-    }
-
-    private String toJson(Object value) {
-        return JSON.toJSONString(stripRuntimeValue(value, new IdentityHashMap<>()));
-    }
-
-    private Map<String, Object> stripRuntimeFields(Map<String, Object> value) {
-        @SuppressWarnings("unchecked")
-        Map<String, Object> stripped = (Map<String, Object>) stripRuntimeValue(value, new IdentityHashMap<>());
-        return stripped;
-    }
-
-    private Object stripRuntimeValue(Object value, IdentityHashMap<Object, Boolean> seen) {
-        if (value == null || value instanceof String || value instanceof Number || value instanceof Boolean) {
-            return value;
-        }
-        if (seen.containsKey(value)) {
-            return "[Circular]";
-        }
-
-        if (value instanceof Map<?, ?> map) {
-            seen.put(value, Boolean.TRUE);
-            Map<String, Object> stripped = new LinkedHashMap<>();
-            for (Map.Entry<?, ?> entry : map.entrySet()) {
-                String key = String.valueOf(entry.getKey());
-                if (RUNTIME_ONLY_KEYS.contains(key)) {
-                    continue;
-                }
-                stripped.put(key, stripRuntimeValue(entry.getValue(), seen));
-            }
-            seen.remove(value);
-            return stripped;
-        }
-
-        if (value instanceof List<?> list) {
-            seen.put(value, Boolean.TRUE);
-            List<Object> stripped = new ArrayList<>();
-            for (Object item : list) {
-                stripped.add(stripRuntimeValue(item, seen));
-            }
-            seen.remove(value);
-            return stripped;
-        }
-
-        return value;
-    }
-
-    private static class EdgeIndexes {
-        private final List<WorkflowEdge> edges;
-        private final Map<String, List<WorkflowEdge>> edgesBySource;
-        private final Map<String, List<WorkflowEdge>> edgesByTarget;
-
-        private EdgeIndexes(List<WorkflowEdge> edges,
-                            Map<String, List<WorkflowEdge>> edgesBySource,
-                            Map<String, List<WorkflowEdge>> edgesByTarget) {
-            this.edges = edges;
-            this.edgesBySource = edgesBySource;
-            this.edgesByTarget = edgesByTarget;
-        }
-    }
-
-    /** 单个节点一次执行的结果（成功带 output，失败带 error） */
-    private static class NodeRun {
-        private final WorkflowNode node;
-        private final ExecutionResponse.NodeResult nodeResult;
-        private final Map<String, Object> output;
-        private final Map<String, Object> rawOutput;
-        private final Exception error;
-
-        private NodeRun(WorkflowNode node,
-                        ExecutionResponse.NodeResult nodeResult,
-                        Map<String, Object> output,
-                        Map<String, Object> rawOutput,
-                        Exception error) {
-            this.node = node;
-            this.nodeResult = nodeResult;
-            this.output = output;
-            this.rawOutput = rawOutput;
-            this.error = error;
-        }
     }
 
     private static class ResumeState {
