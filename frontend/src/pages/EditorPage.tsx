@@ -8,7 +8,7 @@ import DebugDrawer from '../components/DebugDrawer';
 import SkillSelector from '../components/SkillSelector';
 import LLMConfigModal from '../components/LLMConfigModal';
 import { logout } from '../api/auth';
-import { useWorkflowStore } from '../store/workflowStore';
+import { useWorkflowStore, useSelectedNode } from '../store/workflowStore';
 import { useAuthStore } from '../store/authStore';
 import { useLLMConfigStore } from '../store/llmConfigStore';
 import { createWorkflow, updateWorkflow, executeWorkflow, getWorkflows, getWorkflow, deleteWorkflow, Workflow } from '../api/workflow';
@@ -139,7 +139,8 @@ const EditorPage = () => {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const { username, clearAuth } = useAuthStore();
-  const { nodes, edges, currentWorkflowId, setCurrentWorkflowId, selectedNode, setNodes, setEdges } = useWorkflowStore();
+  const { nodes, edges, currentWorkflowId, setCurrentWorkflowId, setNodes, setEdges } = useWorkflowStore();
+  const selectedNode = useSelectedNode();
   const [workflowName, setWorkflowName] = useState('未命名工作流');
   const [engineType, setEngineType] = useState('dag');
   const [saving, setSaving] = useState(false);
@@ -1263,7 +1264,6 @@ const EditorPage = () => {
     if (!selectedNode) return;
     const updatedData = { ...selectedNode.data, ...patch };
     useWorkflowStore.getState().updateNode(selectedNode.id, updatedData);
-    useWorkflowStore.getState().setSelectedNode({ ...selectedNode, data: updatedData });
   };
   const getAgentPlanInputParams = () => (
     Array.isArray(selectedNode?.data?.inputParams)

@@ -651,6 +651,11 @@ select {
   box-shadow: 0 14px 30px rgba(15, 23, 42, 0.12);
 }
 
+.workflow-node.run-RUNNING { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22); }
+.workflow-node.run-SUCCESS { border-color: #22c55e; }
+.workflow-node.run-FAILED { border-color: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25); }
+.workflow-node.run-SKIPPED { opacity: 0.55; }
+
 .workflow-node.is-selected {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14), 0 14px 30px rgba(15, 23, 42, 0.12);

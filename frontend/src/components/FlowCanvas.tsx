@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -6,27 +6,19 @@ import {
   MiniMap,
   Node,
   NodeProps,
-  Connection,
   Handle,
   Position,
-  addEdge,
-  applyNodeChanges,
-  applyEdgeChanges,
-  useNodesState,
-  useEdgesState,
   useReactFlow,
   BaseEdge,
   EdgeToolbar,
   NodeResizer,
   getSmoothStepPath,
   EdgeProps,
-  OnNodesChange,
-  OnEdgesChange,
-  OnConnect,
-  MarkerType,
+  ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useWorkflowStore } from '../store/workflowStore';
+import { WORKFLOW_EDGE_MARKER, WORKFLOW_EDGE_STYLE, WORKFLOW_EDGE_TYPE } from '../utils/workflowEdge';
 
 interface FlowCanvasProps {
   onNodeClick: (node: Node) => void;
@@ -49,17 +41,6 @@ type WorkflowNodeData = {
 };
 
 type WorkflowCardNode = Node<WorkflowNodeData, 'workflow'>;
-
-const WORKFLOW_EDGE_STYLE = {
-  stroke: '#8b9bb4',
-  strokeWidth: 2,
-};
-
-const WORKFLOW_EDGE_MARKER = {
-  type: MarkerType.ArrowClosed,
-  width: 20,
-  height: 20,
-};
 
 const getDefaultNodeData = (type: string) => {
   switch (type) {
@@ -115,6 +96,7 @@ const getKnowledgeBaseLabel = (data: WorkflowNodeData) => {
 };
 
 const WorkflowNodeCard = ({ id, data, selected }: NodeProps<WorkflowCardNode>) => {
+  const runStatus = useWorkflowStore((state) => state.runStatus[id]);
   const workflowType = data.type || '';
   const meta = getNodeMeta(workflowType);
   const inputCount = Array.isArray(data.inputParams) ? data.inputParams.length : 0;
@@ -130,7 +112,7 @@ const WorkflowNodeCard = ({ id, data, selected }: NodeProps<WorkflowCardNode>) =
   const handleCount = isCondition ? conditions.length + 1 : 0;
 
   return (
-    <div className={`workflow-node ${selected ? 'is-selected' : ''}`}>
+    <div className={`workflow-node ${selected ? 'is-selected' : ''} ${runStatus ? `run-${runStatus}` : ''}`}>
       <NodeResizer
         nodeId={id}
         isVisible={selected}
@@ -280,97 +262,20 @@ const edgeTypes = {
 };
 
 /**
- * 中间画布组件
+ * 中间画布组件。
+ * nodes / edges 的唯一数据源是 Zustand store，ReactFlow 以受控模式直接读写它，
+ * 这里不再保留本地副本，也就不需要任何"回声标记"或 setTimeout 来同步。
  */
 const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
-  const { nodes: storeNodes, edges: storeEdges, setNodes: setStoreNodes, setEdges: setStoreEdges } = useWorkflowStore();
+  const nodes = useWorkflowStore((state) => state.nodes);
+  const edges = useWorkflowStore((state) => state.edges);
+  const onNodesChange = useWorkflowStore((state) => state.onNodesChange);
+  const onEdgesChange = useWorkflowStore((state) => state.onEdgesChange);
+  const onConnect = useWorkflowStore((state) => state.onConnect);
+  const addNode = useWorkflowStore((state) => state.addNode);
+  const flowRef = useRef<ReactFlowInstance | null>(null);
 
-  const [nodes, setNodes] = useNodesState(storeNodes);
-  const [edges, setEdges] = useEdgesState(storeEdges);
-
-  /*
-   * The canvas state (nodes/edges) and the app-level Zustand store both hold a
-   * copy of the graph, kept in sync in both directions. A push FROM the canvas
-   * (e.g. selecting or deleting an edge) updates the store, which in turn used
-   * to unconditionally re-push INTO the canvas — clobbering the just-applied
-   * change (and any transient state like `selected`) before React Flow's own
-   * delete-key handler could act on it. These refs mark "this store update
-   * originated from the canvas itself, skip the echo" so external updates
-   * (loading a workflow, editing a node in the Inspector) still flow in.
-   */
-  const skipNodesSync = useRef(false);
-  const skipEdgesSync = useRef(false);
-
-  // 当 store 中的 nodes/edges 变化时，同步更新到本地状态（跳过画布自己发起的回声更新）
-  useEffect(() => {
-    if (skipNodesSync.current) {
-      skipNodesSync.current = false;
-      return;
-    }
-    setNodes(storeNodes);
-  }, [storeNodes, setNodes]);
-
-  useEffect(() => {
-    if (skipEdgesSync.current) {
-      skipEdgesSync.current = false;
-      return;
-    }
-    const edgesWithMarkers = storeEdges.map(edge => ({
-      ...edge,
-      type: 'workflow-edge',
-      style: WORKFLOW_EDGE_STYLE,
-      markerEnd: WORKFLOW_EDGE_MARKER,
-    }));
-    setEdges(edgesWithMarkers);
-  }, [storeEdges, setEdges]);
-
-  /*
-   * Pushing to the Zustand store must not happen synchronously inside a
-   * setState updater (React logs "Cannot update a component while rendering
-   * a different component" and the store write is unreliable). Deferring it
-   * with setTimeout(0) moves it out of the render phase — this is why the
-   * original code did the same, even though it looked like an odd workaround.
-   */
-  const handleNodesChange: OnNodesChange = useCallback((changes) => {
-    setNodes((currentNodes) => {
-      const updatedNodes = applyNodeChanges(changes, currentNodes);
-      setTimeout(() => {
-        skipNodesSync.current = true;
-        setStoreNodes(updatedNodes);
-      }, 0);
-      return updatedNodes;
-    });
-  }, [setNodes, setStoreNodes]);
-
-  const handleEdgesChange: OnEdgesChange = useCallback((changes) => {
-    setEdges((currentEdges) => {
-      const updatedEdges = applyEdgeChanges(changes, currentEdges);
-      setTimeout(() => {
-        skipEdgesSync.current = true;
-        setStoreEdges(updatedEdges);
-      }, 0);
-      return updatedEdges;
-    });
-  }, [setEdges, setStoreEdges]);
-
-  const handleConnect: OnConnect = useCallback((connection: Connection) => {
-    setEdges((eds) => {
-      const newEdge = {
-        ...connection,
-        type: 'workflow-edge',
-        style: WORKFLOW_EDGE_STYLE,
-        markerEnd: WORKFLOW_EDGE_MARKER,
-      };
-      const updatedEdges = addEdge(newEdge, eds);
-      setTimeout(() => {
-        skipEdgesSync.current = true;
-        setStoreEdges(updatedEdges);
-      }, 0);
-      return updatedEdges;
-    });
-  }, [setEdges, setStoreEdges]);
-
-  // 处理拖拽放置
+  // 处理拖拽放置：用 screenToFlowPosition 换算，缩放/平移之后落点才是对的
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
@@ -380,29 +285,18 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
 
       if (!type) return;
 
-      const reactFlowBounds = (event.target as HTMLElement).getBoundingClientRect();
-      const position = {
-        x: event.clientX - reactFlowBounds.left - 75,
-        y: event.clientY - reactFlowBounds.top - 25,
-      };
+      const position = flowRef.current
+        ? flowRef.current.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+        : { x: event.clientX, y: event.clientY };
 
-      const newNode: Node = {
+      addNode({
         id: `${type}-${Date.now()}`,
         type: 'workflow',
         position,
         data: { label: label || type, type, ...getDefaultNodeData(type) },
-      };
-
-      setNodes((nds) => {
-        const updatedNodes = nds.concat(newNode);
-        setTimeout(() => {
-          skipNodesSync.current = true;
-          setStoreNodes(updatedNodes);
-        }, 0);
-        return updatedNodes;
       });
     },
-    [setNodes, setStoreNodes]
+    [addNode]
   );
 
   const onDragOver = useCallback((event: React.DragEvent) => {
@@ -422,16 +316,17 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={handleNodesChange}
-        onEdgesChange={handleEdgesChange}
-        onConnect={handleConnect}
+        onInit={(instance) => { flowRef.current = instance as ReactFlowInstance; }}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
         onDrop={onDrop}
         onDragOver={onDragOver}
         onNodeClick={handleNodeClick}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         defaultEdgeOptions={{
-          type: 'workflow-edge',
+          type: WORKFLOW_EDGE_TYPE,
           style: WORKFLOW_EDGE_STYLE,
           markerEnd: WORKFLOW_EDGE_MARKER,
         }}
