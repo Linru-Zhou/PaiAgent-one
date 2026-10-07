@@ -45,7 +45,8 @@ public class MemoryWriteNodeExecutor extends AbstractAgentPlanNodeExecutor {
                 memoryService.splitTags(stringData(node, "tags", "")),
                 node.getId(),
                 embedding,
-                config.model()
+                config.model(),
+                idempotencyKey(input)
         );
     }
 

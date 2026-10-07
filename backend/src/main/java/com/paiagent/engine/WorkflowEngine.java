@@ -30,6 +30,9 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class WorkflowEngine implements WorkflowExecutor {
+
+    /** 只在运行时传递、不应该写进快照/执行记录/输出的字段 */
+    private static final Set<String> RUNTIME_ONLY_KEYS = Set.of("__nodeOutputs__", "__executionId__", "__idempotencyKey__");
     
     @Autowired
     private DAGParser dagParser;
@@ -175,11 +178,13 @@ public class WorkflowEngine implements WorkflowExecutor {
                 }
                 
                 // 解析当前节点的输入
-                Map<String, Object> nodeInput = resolveNodeInput(node, nodeOutputs, edgesByTarget, currentInput);
+                Map<String, Object> nodeInput = new LinkedHashMap<>(resolveNodeInput(node, nodeOutputs, edgesByTarget, currentInput));
                 if (!resumeState.modifiedVariables.isEmpty()) {
-                    nodeInput = new LinkedHashMap<>(nodeInput);
                     nodeInput.putAll(resumeState.modifiedVariables);
                 }
+                // 运行时字段：执行上下文与幂等键，供有副作用的节点（写记忆/写知识库）去重，不会被持久化
+                nodeInput.put("__executionId__", record.getId());
+                nodeInput.put("__idempotencyKey__", record.getId() + ":" + node.getId());
                 
                 long nodeStartTime = System.currentTimeMillis();
                 ExecutionSnapshot snapshot = createOrUpdateSnapshotStart(record.getId(), flowId, node, nodeInput, sortedNodes.indexOf(node), nodeStartTime);
@@ -689,7 +694,7 @@ public class WorkflowEngine implements WorkflowExecutor {
             Map<String, Object> stripped = new LinkedHashMap<>();
             for (Map.Entry<?, ?> entry : map.entrySet()) {
                 String key = String.valueOf(entry.getKey());
-                if ("__nodeOutputs__".equals(key)) {
+                if (RUNTIME_ONLY_KEYS.contains(key)) {
                     continue;
                 }
                 stripped.put(key, stripRuntimeValue(entry.getValue(), seen));

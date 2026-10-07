@@ -21,7 +21,8 @@ import java.lang.annotation.Target;
         "minio.bucketName=paiagent",
         "minio.publicUrl=http://localhost:9000",
         "spring.ai.openai.api-key=sk-test-placeholder",
-        "spring.datasource.password=123456"
+        "spring.datasource.password=123456",
+        "paiagent.memory.sqlite-path=target/test-data/agent-memory-test.db"
 })
 @Import(TestNodeExecutors.class)
 public @interface PaiAgentSpringTest {

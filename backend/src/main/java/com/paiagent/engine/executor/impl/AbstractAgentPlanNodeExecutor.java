@@ -96,6 +96,12 @@ abstract class AbstractAgentPlanNodeExecutor implements NodeExecutor {
         return parts.length == 0 ? referenceNode : parts[parts.length - 1];
     }
 
+    /** 引擎注入的幂等键（executionId:nodeId），没有执行上下文（比如单测、ReAct 工具调用）时为 null。 */
+    protected String idempotencyKey(Map<String, Object> input) {
+        Object key = input == null ? null : input.get("__idempotencyKey__");
+        return key == null ? null : String.valueOf(key);
+    }
+
     protected String stringData(WorkflowNode node, String field, String defaultValue) {
         String value = asText(node.getData().get(field));
         return StringUtils.hasText(value) ? value : defaultValue;

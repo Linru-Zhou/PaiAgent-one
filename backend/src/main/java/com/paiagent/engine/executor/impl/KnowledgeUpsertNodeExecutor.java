@@ -49,7 +49,8 @@ public class KnowledgeUpsertNodeExecutor extends AbstractAgentPlanNodeExecutor {
                 stringData(node, "sourceUrl", null),
                 memoryService.splitTags(stringData(node, "tags", "")),
                 embedding,
-                config.model()
+                config.model(),
+                idempotencyKey(input)
         );
         output.put("output", output.get("contentId"));
         return output;

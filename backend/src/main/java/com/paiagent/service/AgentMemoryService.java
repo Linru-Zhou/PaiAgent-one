@@ -86,7 +86,21 @@ public class AgentMemoryService {
     public Map<String, Object> write(String content, String memoryType, String scope,
                                      List<String> tags, String source, List<Double> embedding,
                                      String embeddingModel) {
-        String id = UUID.randomUUID().toString();
+        return write(content, memoryType, scope, tags, source, embedding, embeddingModel, null);
+    }
+
+    /**
+     * 写入长期记忆。传入 idempotencyKey（通常是 executionId:nodeId）时，记忆 ID 由 key 确定性生成，
+     * 同一个 key 重复写入是"覆盖同一条"而不是再追加一条，工作流断点续跑/重试因此不会产生重复记忆。
+     */
+    public Map<String, Object> write(String content, String memoryType, String scope,
+                                     List<String> tags, String source, List<Double> embedding,
+                                     String embeddingModel, String idempotencyKey) {
+        boolean idempotent = StringUtils.hasText(idempotencyKey);
+        String id = idempotent
+                ? "idem-" + UUID.nameUUIDFromBytes(idempotencyKey.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                : UUID.randomUUID().toString();
+        boolean replaced = false;
         String resolvedScope = StringUtils.hasText(scope) ? scope : "workflow";
         String resolvedType = StringUtils.hasText(memoryType) ? memoryType : "fact";
         String tagsJson = writeJson(tags == null ? List.of() : tags);
@@ -95,6 +109,15 @@ public class AgentMemoryService {
 
         try (Connection conn = openConnection()) {
             conn.setAutoCommit(false);
+            if (idempotent) {
+                try (PreparedStatement deleteOld = conn.prepareStatement("DELETE FROM agent_memory WHERE id = ?");
+                     PreparedStatement deleteOldFts = conn.prepareStatement("DELETE FROM agent_memory_fts WHERE memory_id = ?")) {
+                    deleteOld.setString(1, id);
+                    replaced = deleteOld.executeUpdate() > 0;
+                    deleteOldFts.setString(1, id);
+                    deleteOldFts.executeUpdate();
+                }
+            }
             try (PreparedStatement insertMemory = conn.prepareStatement(
                     "INSERT INTO agent_memory (id, scope, memory_type, content, tags, source, embedding, embedding_model, created_at) " +
                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
@@ -124,6 +147,9 @@ public class AgentMemoryService {
         output.put("memoryId", id);
         output.put("scope", resolvedScope);
         output.put("stored", true);
+        if (idempotent) {
+            output.put("replaced", replaced);
+        }
         return output;
     }
 

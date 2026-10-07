@@ -253,13 +253,43 @@ public class KnowledgeBaseService {
     public Map<String, Object> upsert(String knowledgeBaseId, String title, String content,
                                       String sourceUrl, List<String> tags, List<Double> embedding,
                                       String embeddingModel) {
+        return upsert(knowledgeBaseId, title, content, sourceUrl, tags, embedding, embeddingModel, null);
+    }
+
+    /**
+     * 写入知识库。传入 idempotencyKey（通常是 executionId:nodeId）时，同一个 key 重复写入会覆盖同一篇文档的内容与分片，
+     * 而不是每次都新建一篇文档，工作流断点续跑/重试因此不会让知识库里出现重复内容。
+     * （同一次执行同一时刻只会有一个请求在跑，由执行状态的乐观锁保证，所以这里用"先查再写"即可。）
+     */
+    public Map<String, Object> upsert(String knowledgeBaseId, String title, String content,
+                                      String sourceUrl, List<String> tags, List<Double> embedding,
+                                      String embeddingModel, String idempotencyKey) {
         KnowledgeBase base = resolveBaseForRuntime(knowledgeBaseId, embeddingModel);
-        KnowledgeTextImportRequest request = new KnowledgeTextImportRequest();
-        request.setTitle(firstText(title, "工作流写入"));
-        request.setContent(content);
-        request.setTags(tags == null ? null : String.join(",", tags));
-        Map<String, Object> documentMap = importText(base.getId(), request);
-        KnowledgeDocument document = knowledgeDocumentMapper.selectById(((Number) documentMap.get("id")).longValue());
+        KnowledgeDocument document = null;
+        if (StringUtils.hasText(idempotencyKey)) {
+            document = knowledgeDocumentMapper.selectOne(new LambdaQueryWrapper<KnowledgeDocument>()
+                    .eq(KnowledgeDocument::getKnowledgeBaseId, base.getId())
+                    .eq(KnowledgeDocument::getIdempotencyKey, idempotencyKey)
+                    .last("LIMIT 1"));
+        }
+        if (document != null) {
+            document.setTitle(firstText(title, "工作流写入"));
+            document.setRawText(content);
+            document.setTags(tags == null || tags.isEmpty() ? null : String.join(",", tags));
+            document.setCharCount((long) content.length());
+            knowledgeDocumentMapper.updateById(document);
+        } else {
+            KnowledgeTextImportRequest request = new KnowledgeTextImportRequest();
+            request.setTitle(firstText(title, "工作流写入"));
+            request.setContent(content);
+            request.setTags(tags == null ? null : String.join(",", tags));
+            Map<String, Object> documentMap = importText(base.getId(), request);
+            document = knowledgeDocumentMapper.selectById(((Number) documentMap.get("id")).longValue());
+            if (StringUtils.hasText(idempotencyKey)) {
+                document.setIdempotencyKey(idempotencyKey);
+                knowledgeDocumentMapper.updateById(document);
+            }
+        }
         List<String> chunks = splitContent(content, base.getChunkSize(), base.getChunkOverlap());
         markOldChunksDeleted(base.getId(), document.getId());
         for (int i = 0; i < chunks.size(); i++) {

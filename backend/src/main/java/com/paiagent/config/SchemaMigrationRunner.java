@@ -55,10 +55,12 @@ public class SchemaMigrationRunner implements ApplicationRunner {
                     status VARCHAR(30) DEFAULT 'IMPORTED' COMMENT '状态',
                     char_count BIGINT DEFAULT 0 COMMENT '字符数',
                     error_message TEXT COMMENT '错误信息',
+                    idempotency_key VARCHAR(128) DEFAULT NULL COMMENT '幂等键(executionId:nodeId)',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
                     deleted TINYINT DEFAULT 0 COMMENT '逻辑删除标识',
                     INDEX idx_knowledge_document_base (knowledge_base_id),
+                    INDEX idx_knowledge_document_idem (knowledge_base_id, idempotency_key),
                     INDEX idx_knowledge_document_status (status)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库文档表'
                 """);
@@ -167,6 +169,10 @@ public class SchemaMigrationRunner implements ApplicationRunner {
                 "ALTER TABLE llm_global_config ADD COLUMN video_model VARCHAR(100) DEFAULT NULL COMMENT '默认视频生成模型' AFTER image_model");
         addColumnIfMissing("llm_global_config", "memory_enabled",
                 "ALTER TABLE llm_global_config ADD COLUMN memory_enabled TINYINT DEFAULT 0 COMMENT '是否启用Agent Plan记忆能力' AFTER video_model");
+        addColumnIfMissing("knowledge_document", "idempotency_key",
+                "ALTER TABLE knowledge_document ADD COLUMN idempotency_key VARCHAR(128) DEFAULT NULL COMMENT '幂等键(executionId:nodeId)'");
+        addIndexIfMissing("knowledge_document", "idx_knowledge_document_idem",
+                "ALTER TABLE knowledge_document ADD INDEX idx_knowledge_document_idem (knowledge_base_id, idempotency_key)");
         addColumnIfMissing("execution_record", "updated_at",
                 "ALTER TABLE execution_record ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP "
                         + "ON UPDATE CURRENT_TIMESTAMP COMMENT '最近更新时间(兼作执行心跳)'");
