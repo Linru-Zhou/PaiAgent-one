@@ -11,6 +11,8 @@ import com.paiagent.dto.ExecutionVariableResponse;
 import com.paiagent.dto.ResumeExecutionRequest;
 import com.paiagent.engine.EngineSelector;
 import com.paiagent.engine.ExecutionConflictException;
+import com.paiagent.engine.ExecutionDispatcher;
+import com.paiagent.engine.ExecutionRejectedException;
 import com.paiagent.engine.WorkflowExecutor;
 import com.paiagent.engine.WorkflowEngine;
 import com.paiagent.entity.ExecutionRecord;
@@ -36,6 +38,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -51,6 +59,9 @@ public class ExecutionController {
     private EngineSelector engineSelector;
 
     @Autowired
+    private ExecutionDispatcher dispatcher;
+
+    @Autowired
     private ExecutionRecordMapper executionRecordMapper;
 
     @Autowired
@@ -63,20 +74,117 @@ public class ExecutionController {
     
     @Operation(summary = "执行工作流")
     @PostMapping("/{id}/execute")
-    public Result<ExecutionResponse> executeWorkflow(@PathVariable Long id, @Valid @RequestBody ExecutionRequest request) {
+    public Result<ExecutionResponse> executeWorkflow(@PathVariable Long id,
+                                                     @Valid @RequestBody ExecutionRequest request,
+                                                     @RequestParam(required = false) String engine) {
         Workflow workflow = workflowService.getById(id);
         if (workflow == null) {
             return Result.error("工作流不存在");
         }
-        
+
         try {
-            // 使用引擎选择器选择合适的执行引擎
-            WorkflowExecutor executor = engineSelector.selectEngine(workflow);
-            ExecutionResponse response = executor.execute(workflow, request.getInputData());
-            return Result.success(response);
+            // 使用引擎选择器选择合适的执行引擎；执行统一经过有界线程池，超载时快速拒绝而不是无限堆积
+            WorkflowExecutor executor = engineSelector.selectEngine(workflow, engine);
+            Future<ExecutionResponse> future = dispatcher.submit(() -> executor.execute(workflow, request.getInputData()));
+            return Result.success(future.get());
+        } catch (ExecutionRejectedException e) {
+            return Result.error(429, e.getMessage());
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            return Result.error("工作流执行失败: " + cause.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Result.error("工作流执行被中断");
         } catch (Exception e) {
             return Result.error("工作流执行失败: " + e.getMessage());
         }
+    }
+
+    @Operation(summary = "异步执行工作流：立即返回 executionId，进度通过 GET /executions/{executionId} 轮询")
+    @PostMapping("/{id}/execute/async")
+    public Result<Map<String, Object>> executeWorkflowAsync(@PathVariable Long id,
+                                                            @Valid @RequestBody ExecutionRequest request,
+                                                            @RequestParam(required = false) String engine) {
+        Workflow workflow = workflowService.getById(id);
+        if (workflow == null) {
+            return Result.error("工作流不存在");
+        }
+
+        try {
+            WorkflowExecutor executor = engineSelector.selectEngine(workflow, engine);
+            AtomicReference<Long> executionId = new AtomicReference<>();
+            AtomicReference<Throwable> startFailure = new AtomicReference<>();
+            CountDownLatch started = new CountDownLatch(1);
+
+            Consumer<ExecutionEvent> callback = event -> {
+                if ("WORKFLOW_START".equals(event.getEventType()) && event.getData() instanceof Number number) {
+                    executionId.set(number.longValue());
+                    started.countDown();
+                }
+            };
+            dispatcher.execute(() -> {
+                try {
+                    executor.executeWithCallback(workflow, request.getInputData(), callback);
+                } catch (Throwable t) {
+                    startFailure.set(t);
+                    log.error("异步执行工作流失败", t);
+                } finally {
+                    started.countDown();
+                }
+            });
+
+            if (!started.await(10, TimeUnit.SECONDS)) {
+                return Result.error("工作流启动超时，请稍后查询执行记录");
+            }
+            if (executionId.get() == null) {
+                Throwable failure = startFailure.get();
+                return Result.error("工作流启动失败: " + (failure != null ? failure.getMessage() : "未知原因"));
+            }
+            return Result.success(Map.of("executionId", executionId.get(), "status", "RUNNING"));
+        } catch (ExecutionRejectedException e) {
+            return Result.error(429, e.getMessage());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Result.error("工作流启动被中断");
+        } catch (Exception e) {
+            return Result.error("工作流启动失败: " + e.getMessage());
+        }
+    }
+
+    @Operation(summary = "查询某次执行的状态与各节点进度（执行中也可查询，用于断线重连/轮询）")
+    @GetMapping("/{id}/executions/{executionId}")
+    public Result<ExecutionResponse> getExecution(@PathVariable Long id, @PathVariable Long executionId) {
+        ExecutionRecord record = executionRecordMapper.selectById(executionId);
+        if (record == null || !id.equals(record.getFlowId())) {
+            return Result.error("执行记录不存在");
+        }
+
+        ExecutionResponse response = new ExecutionResponse();
+        response.setExecutionId(record.getId());
+        response.setStatus(record.getStatus());
+        response.setInputData(record.getInputData());
+        response.setOutputData(record.getOutputData());
+        response.setDuration(record.getDuration());
+        response.setErrorMessage(record.getErrorMessage());
+        if ("RUNNING".equals(record.getStatus())) {
+            // 执行中时 node_results 还没写入，实时进度来自逐节点落库的快照
+            List<ExecutionResponse.NodeResult> live = new ArrayList<>();
+            for (ExecutionSnapshot snapshot : executionSnapshotMapper.selectByExecutionId(executionId)) {
+                ExecutionResponse.NodeResult nodeResult = new ExecutionResponse.NodeResult();
+                nodeResult.setNodeId(snapshot.getNodeId());
+                nodeResult.setNodeName(snapshot.getNodeType());
+                nodeResult.setStatus(snapshot.getStatus());
+                nodeResult.setInput(snapshot.getInputData());
+                nodeResult.setOutput(snapshot.getOutputData());
+                nodeResult.setDuration(snapshot.getDuration() != null ? snapshot.getDuration() : 0);
+                nodeResult.setError(snapshot.getErrorMessage());
+                live.add(nodeResult);
+            }
+            response.setNodeResults(live);
+        } else {
+            response.setNodeResults(parseNodeResults(record.getNodeResults()));
+        }
+        return Result.success(response);
     }
 
     @Operation(summary = "获取工作流最近一次执行记录")
@@ -169,55 +277,86 @@ public class ExecutionController {
     
     @Operation(summary = "实时执行工作流(SSE)")
     @GetMapping(value = "/{id}/execute/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter executeWorkflowStream(@PathVariable Long id, @RequestParam String inputData) {
+    public SseEmitter executeWorkflowStream(@PathVariable Long id,
+                                            @RequestParam String inputData,
+                                            @RequestParam(required = false) String engine) {
         SseEmitter emitter = new SseEmitter(300000L);
         String emitterId = id + "_" + System.currentTimeMillis();
         emitters.put(emitterId, emitter);
-        
+        // 浏览器断开后只停止推送，不中断执行：执行结果照常落库，客户端可以按 executionId 重新查询
+        AtomicBoolean clientGone = new AtomicBoolean(false);
+
         emitter.onCompletion(() -> emitters.remove(emitterId));
-        emitter.onTimeout(() -> emitters.remove(emitterId));
-        emitter.onError((e) -> emitters.remove(emitterId));
-        
+        emitter.onTimeout(() -> {
+            clientGone.set(true);
+            emitters.remove(emitterId);
+        });
+        emitter.onError((e) -> {
+            clientGone.set(true);
+            emitters.remove(emitterId);
+        });
+
         Consumer<ExecutionEvent> eventCallback = event -> {
+            if (clientGone.get()) {
+                return;
+            }
             try {
                 emitter.send(SseEmitter.event()
                         .name(event.getEventType())
                         .data(event));
-            } catch (IOException e) {
-                log.error("发送 SSE 事件失败", e);
+            } catch (IOException | IllegalStateException e) {
+                clientGone.set(true);
+                log.warn("SSE 客户端已断开，停止推送（执行继续在后台完成）: {}", e.getMessage());
                 emitters.remove(emitterId);
             }
         };
-        
-        new Thread(() -> {
-            try {
-                Workflow workflow = workflowService.getById(id);
-                if (workflow == null) {
-                    emitter.send(SseEmitter.event()
-                            .name("ERROR")
-                            .data(ExecutionEvent.workflowComplete("FAILED", "工作流不存在", 0)));
-                    emitter.complete();
-                    return;
-                }
-                
-                // 使用引擎选择器选择合适的执行引擎
-                WorkflowExecutor executor = engineSelector.selectEngine(workflow);
-                executor.executeWithCallback(workflow, inputData, eventCallback);
-                emitter.complete();
-            } catch (Exception e) {
-                log.error("工作流执行失败", e);
+
+        try {
+            dispatcher.execute(() -> {
                 try {
-                    emitter.send(SseEmitter.event()
-                            .name("ERROR")
-                            .data(ExecutionEvent.workflowComplete("FAILED", e.getMessage(), 0)));
-                } catch (IOException ex) {
-                    log.error("发送错误事件失败", ex);
+                    Workflow workflow = workflowService.getById(id);
+                    if (workflow == null) {
+                        sendError(emitter, clientGone, "工作流不存在");
+                        return;
+                    }
+
+                    // 使用引擎选择器选择合适的执行引擎
+                    WorkflowExecutor executor = engineSelector.selectEngine(workflow, engine);
+                    executor.executeWithCallback(workflow, inputData, eventCallback);
+                } catch (Exception e) {
+                    log.error("工作流执行失败", e);
+                    sendError(emitter, clientGone, e.getMessage());
+                } finally {
+                    completeQuietly(emitter);
                 }
-                emitter.complete();
-            }
-        }).start();
-        
+            });
+        } catch (ExecutionRejectedException e) {
+            sendError(emitter, clientGone, e.getMessage());
+            completeQuietly(emitter);
+        }
+
         return emitter;
+    }
+
+    private void sendError(SseEmitter emitter, AtomicBoolean clientGone, String message) {
+        if (clientGone.get()) {
+            return;
+        }
+        try {
+            emitter.send(SseEmitter.event()
+                    .name("ERROR")
+                    .data(ExecutionEvent.workflowComplete("FAILED", message, 0)));
+        } catch (IOException | IllegalStateException ex) {
+            log.warn("发送错误事件失败: {}", ex.getMessage());
+        }
+    }
+
+    private void completeQuietly(SseEmitter emitter) {
+        try {
+            emitter.complete();
+        } catch (Exception ignored) {
+            // 客户端已断开时 complete 可能抛异常，忽略即可
+        }
     }
 
     private List<ExecutionResponse.NodeResult> parseNodeResults(String nodeResults) {

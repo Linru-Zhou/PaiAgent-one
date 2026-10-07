@@ -49,6 +49,22 @@ public class EngineSelector {
     }
     
     /**
+     * 选择执行引擎，允许调用方临时指定（用于同一个工作流在两套引擎上对比运行）。
+     *
+     * @param engineOverride "dag" / "langgraph"；为空则按工作流自身配置
+     */
+    public WorkflowExecutor selectEngine(Workflow workflow, String engineOverride) {
+        if (engineOverride == null || engineOverride.isBlank()) {
+            return selectEngine(workflow);
+        }
+        String wanted = engineOverride.toLowerCase().trim();
+        return executors.stream()
+                .filter(e -> e.getEngineType().equals(wanted))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("不支持的引擎类型: " + engineOverride));
+    }
+
+    /**
      * 从工作流中获取引擎类型
      * 
      * @param workflow 工作流定义

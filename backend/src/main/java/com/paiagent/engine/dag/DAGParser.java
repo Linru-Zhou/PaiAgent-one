@@ -42,6 +42,11 @@ public class DAGParser {
         for (WorkflowEdge edge : edges) {
             String source = edge.getSource();
             String target = edge.getTarget();
+            if (!nodeMap.containsKey(source) || !nodeMap.containsKey(target)) {
+                String missing = !nodeMap.containsKey(source) ? source : target;
+                throw new IllegalArgumentException("连线引用了不存在的节点: " + missing
+                        + "（" + source + " -> " + target + "），请检查工作流是否有残留的无效连线");
+            }
             
             // target 依赖 source
             dependencies.get(target).add(source);
@@ -56,6 +61,39 @@ public class DAGParser {
         return topologicalSort(nodeMap, dependencies);
     }
     
+    /**
+     * 把拓扑排序后的节点按"最长依赖路径"分层：同一层的节点之间没有任何依赖关系，可以并发执行。
+     * 取最长路径（而不是最短）才能保证一个节点一定排在它所有上游节点所在层之后。
+     *
+     * @param sortedNodes {@link #parse} 返回的拓扑有序节点列表
+     */
+    public List<List<WorkflowNode>> groupIntoLevels(List<WorkflowNode> sortedNodes, List<WorkflowEdge> edges) {
+        Map<String, List<String>> upstream = new HashMap<>();
+        if (edges != null) {
+            for (WorkflowEdge edge : edges) {
+                upstream.computeIfAbsent(edge.getTarget(), k -> new ArrayList<>()).add(edge.getSource());
+            }
+        }
+
+        Map<String, Integer> levelOf = new HashMap<>();
+        List<List<WorkflowNode>> levels = new ArrayList<>();
+        for (WorkflowNode node : sortedNodes) {
+            int level = 0;
+            for (String source : upstream.getOrDefault(node.getId(), List.of())) {
+                Integer sourceLevel = levelOf.get(source);
+                if (sourceLevel != null) {
+                    level = Math.max(level, sourceLevel + 1);
+                }
+            }
+            levelOf.put(node.getId(), level);
+            while (levels.size() <= level) {
+                levels.add(new ArrayList<>());
+            }
+            levels.get(level).add(node);
+        }
+        return levels;
+    }
+
     /**
      * 检测循环依赖(使用 DFS)
      */
