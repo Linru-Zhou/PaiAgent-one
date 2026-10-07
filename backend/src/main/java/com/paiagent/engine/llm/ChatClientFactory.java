@@ -10,6 +10,7 @@ import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.retry.RetryUtils;
 import org.springframework.http.MediaType;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -28,6 +29,20 @@ public class ChatClientFactory {
     private static final String CHAT_COMPLETIONS_SUFFIX = "/v1/chat/completions";
 
     private static final String V1_SUFFIX = "/v1";
+
+    /** 超时/重试策略与按供应商限流；Spring 容器会注入配置好的实例，手工 new 时（单测）使用默认值 */
+    private LlmCallPolicy policy = LlmCallPolicy.defaults();
+    private LlmConcurrencyLimiter limiter = LlmConcurrencyLimiter.defaults();
+
+    @Autowired(required = false)
+    public void setPolicy(LlmCallPolicy policy) {
+        this.policy = policy;
+    }
+
+    @Autowired(required = false)
+    public void setLimiter(LlmConcurrencyLimiter limiter) {
+        this.limiter = limiter;
+    }
 
     /**
      * 根据提供商和配置创建ChatClient
@@ -75,6 +90,7 @@ public class ChatClientFactory {
                     createVolcengineArkChatModel(apiUrl, apiKey, normalizedModel, temperature);
             default -> throw new IllegalArgumentException("不支持的提供商类型: " + provider);
         };
+        chatModel = new GuardedChatModel(chatModel, normalizedProvider, limiter, policy.readTimeout());
 
         ChatClient.Builder builder = ChatClient.builder(chatModel);
 
@@ -100,16 +116,21 @@ public class ChatClientFactory {
             log.warn("检测到 OpenAI 兼容接口地址包含路径后缀，已自动归一化: {} -> {}", apiUrl, normalizedApiUrl);
         }
 
-        // 使用构造函数创建OpenAiApi（支持自定义baseUrl）
-        OpenAiApi openAiApi = new OpenAiApi(normalizedApiUrl, apiKey);
+        // 带超时的 HTTP 客户端 + 自定义重试策略（Spring AI 默认无读超时、重试 10 次且退避最长 3 分钟）
+        OpenAiApi openAiApi = new OpenAiApi(
+                normalizedApiUrl,
+                apiKey,
+                policy.restClientBuilder(),
+                policy.webClientBuilder(),
+                RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER
+        );
 
-        // 创建ChatModel并配置选项
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(model)
                 .temperature(temperature)
                 .build();
 
-        return new OpenAiChatModel(openAiApi, options);
+        return new OpenAiChatModel(openAiApi, options, null, policy.retryTemplate());
     }
 
     /**
@@ -127,7 +148,7 @@ public class ChatClientFactory {
                 normalizedApiUrl,
                 apiKey,
                 createTextPlainJsonRestClientBuilder(),
-                WebClient.builder(),
+                policy.webClientBuilder(),
                 RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER
         );
 
@@ -136,7 +157,7 @@ public class ChatClientFactory {
                 .temperature(temperature)
                 .build();
 
-        return new OpenAiChatModel(openAiApi, options);
+        return new OpenAiChatModel(openAiApi, options, null, policy.retryTemplate());
     }
 
     /**
@@ -155,8 +176,8 @@ public class ChatClientFactory {
                 apiKey,
                 "/api/plan/v3/chat/completions",
                 "/api/plan/v3/embeddings",
-                RestClient.builder(),
-                WebClient.builder(),
+                policy.restClientBuilder(),
+                policy.webClientBuilder(),
                 RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER
         );
 
@@ -165,7 +186,7 @@ public class ChatClientFactory {
                 .temperature(temperature)
                 .build();
 
-        return new OpenAiChatModel(openAiApi, options);
+        return new OpenAiChatModel(openAiApi, options, null, policy.retryTemplate());
     }
 
     /**
@@ -210,7 +231,7 @@ public class ChatClientFactory {
                 MediaType.TEXT_PLAIN
         ));
 
-        return RestClient.builder()
+        return policy.restClientBuilder()
                 .messageConverters(converters -> converters.add(0, textPlainJsonConverter));
     }
 
