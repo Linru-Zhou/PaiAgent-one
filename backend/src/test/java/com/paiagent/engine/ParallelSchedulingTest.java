@@ -93,6 +93,27 @@ class ParallelSchedulingTest {
     }
 
     @Test
+    void snapshotTimestampsHaveMillisecondPrecisionSoTheTimelineCanShowOverlap() {
+        Workflow workflow = fanOut(300, 0);
+        ExecutionResponse response = engine.execute(workflow, "x");
+        assertEquals("SUCCESS", response.getStatus());
+
+        List<ExecutionSnapshot> workers = List.of("a", "b", "c").stream()
+                .map(id -> snapshotMapper.selectByExecutionIdAndNodeId(response.getExecutionId(), id))
+                .collect(Collectors.toList());
+
+        for (ExecutionSnapshot snapshot : workers) {
+            long spanMs = java.time.Duration.between(snapshot.getStartedAt(), snapshot.getCompletedAt()).toMillis();
+            assertTrue(Math.abs(spanMs - snapshot.getDuration()) <= 60,
+                    snapshot.getNodeId() + " 起止时间差 " + spanMs + "ms 应与记录的耗时 " + snapshot.getDuration() + "ms 接近");
+            assertTrue(spanMs >= 300, "300ms 的节点，起止时间差却只有 " + spanMs + "ms，说明时间被截断到了秒");
+        }
+        long latestStart = workers.stream().mapToLong(w -> w.getStartedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()).max().orElse(0);
+        long earliestEnd = workers.stream().mapToLong(w -> w.getCompletedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()).min().orElse(0);
+        assertTrue(latestStart < earliestEnd, "三个并行节点在落库的时间轴上应当互相重叠");
+    }
+
+    @Test
     void parallelAndSerialProduceTheSameResult() {
         Workflow workflow = fanOut(50, 0);
 

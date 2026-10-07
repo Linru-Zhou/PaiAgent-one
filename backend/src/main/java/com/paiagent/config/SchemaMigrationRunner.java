@@ -180,6 +180,9 @@ public class SchemaMigrationRunner implements ApplicationRunner {
                 "ALTER TABLE execution_record ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP "
                         + "ON UPDATE CURRENT_TIMESTAMP COMMENT '最近更新时间(兼作执行心跳)'");
         addIndexIfMissing("execution_record", "idx_status_updated", "ALTER TABLE execution_record ADD INDEX idx_status_updated (status, updated_at)");
+        // 节点耗时是毫秒级，起止时间只有秒精度会让时间线的起点最多偏差 1 秒
+        widenToMillisIfNeeded("execution_snapshot", "started_at", "TIMESTAMP(3) NULL COMMENT '开始执行时间(毫秒精度)'");
+        widenToMillisIfNeeded("execution_snapshot", "completed_at", "TIMESTAMP(3) NULL COMMENT '完成时间(毫秒精度)'");
         dedupeExecutionSnapshots();
         addIndexIfMissing("execution_snapshot", "uk_execution_node",
                 "ALTER TABLE execution_snapshot ADD UNIQUE KEY uk_execution_node (execution_id, node_id)");
@@ -284,6 +287,21 @@ public class SchemaMigrationRunner implements ApplicationRunner {
         if (removed > 0) {
             log.warn("Schema migrated: removed {} duplicate execution_snapshot rows", removed);
         }
+    }
+
+    private void widenToMillisIfNeeded(String tableName, String columnName, String definition) {
+        Integer precision = jdbcTemplate.queryForObject("""
+                SELECT DATETIME_PRECISION
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = ?
+                  AND COLUMN_NAME = ?
+                """, Integer.class, tableName, columnName);
+        if (precision != null && precision >= 3) {
+            return;
+        }
+        jdbcTemplate.execute("ALTER TABLE " + tableName + " MODIFY COLUMN " + columnName + " " + definition);
+        log.info("Schema migrated: {}.{} widened to millisecond precision", tableName, columnName);
     }
 
     private void addColumnIfMissing(String tableName, String columnName, String ddl) {
