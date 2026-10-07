@@ -656,7 +656,7 @@ EngineSelector.execute(workflowConfig);
 
 **LangGraph4j 执行流程**
 1. **配置解析**：将 WorkflowConfig 传入 GraphBuilder
-2. **状态图构建**：GraphBuilder 将节点/边转换为 LangGraph4j StateGraph，支持条件分支
+2. **状态图构建**：GraphBuilder 将节点/边转换为 LangGraph4j StateGraph，支持条件分支（按拓扑序串行执行；并行调度由 DAG 引擎提供）
 3. **状态初始化**：StateManager 初始化 inputData、nodeOutputs、globalContext
 4. **异步执行**：NodeAdapter 将现有 NodeExecutor 适配为 AsyncNodeAction，复用已有业务逻辑
 5. **事件驱动**：执行过程触发 ExecutionEvent 回调（start / success / error）
