@@ -25,12 +25,19 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
     private final VolcengineAgentPlanClient agentPlanClient;
     private final MinioService minioService;
 
+    private long pollIntervalMs = POLL_INTERVAL_MS;
+
     public VideoGenerateNodeExecutor(AgentPlanConfigResolver configResolver,
                                      VolcengineAgentPlanClient agentPlanClient,
                                      MinioService minioService) {
         this.configResolver = configResolver;
         this.agentPlanClient = agentPlanClient;
         this.minioService = minioService;
+    }
+
+    /** 仅供单测缩短轮询间隔，生产代码保持默认 5s。 */
+    void setPollIntervalMs(long pollIntervalMs) {
+        this.pollIntervalMs = pollIntervalMs;
     }
 
     @Override
@@ -73,7 +80,7 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
         Map<String, Object> task = Map.of("status", "running");
         for (int i = 0; i < MAX_POLLS; i++) {
             emit(node, progressCallback, "视频生成中", Map.of("taskId", taskId, "poll", i + 1));
-            Thread.sleep(POLL_INTERVAL_MS);
+            Thread.sleep(pollIntervalMs);
             task = agentPlanClient.getVideoTask(config, taskId);
             String status = String.valueOf(task.getOrDefault("status", ""));
             if (isSuccess(status)) {
