@@ -1,5 +1,6 @@
 package com.paiagent.config;
 
+import com.paiagent.security.SecretCodec;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -16,9 +17,11 @@ import org.springframework.stereotype.Component;
 public class SchemaMigrationRunner implements ApplicationRunner {
 
     private final JdbcTemplate jdbcTemplate;
+    private final SecretCodec secretCodec;
 
-    public SchemaMigrationRunner(JdbcTemplate jdbcTemplate) {
+    public SchemaMigrationRunner(JdbcTemplate jdbcTemplate, SecretCodec secretCodec) {
         this.jdbcTemplate = jdbcTemplate;
+        this.secretCodec = secretCodec;
     }
 
     @Override
@@ -188,6 +191,48 @@ public class SchemaMigrationRunner implements ApplicationRunner {
                 "ALTER TABLE knowledge_chunk ADD COLUMN status VARCHAR(30) DEFAULT 'READY' COMMENT '状态' AFTER embedding");
         addColumnIfMissing("knowledge_chunk", "char_count",
                 "ALTER TABLE knowledge_chunk ADD COLUMN char_count INT DEFAULT 0 COMMENT '字符数' AFTER status");
+        encryptExistingSecrets();
+    }
+
+    /**
+     * 把历史明文 API Key 就地加密。用原生 JDBC 直接读写列（绕开 TypeHandler 才能看到库里的真实内容），
+     * 已加密的值会被 encrypt 原样跳过，所以重复启动是幂等的；updated_at = updated_at 避免打乱列表排序。
+     */
+    private void encryptExistingSecrets() {
+        int workflows = 0;
+        for (var row : jdbcTemplate.queryForList("SELECT id, flow_data FROM workflow")) {
+            String raw = (String) row.get("flow_data");
+            String encrypted = secretCodec.encryptFlowData(raw);
+            if (encrypted != null && !encrypted.equals(raw)) {
+                jdbcTemplate.update("UPDATE workflow SET flow_data = ?, updated_at = updated_at WHERE id = ?",
+                        encrypted, row.get("id"));
+                workflows++;
+            }
+        }
+        int configs = 0;
+        for (var row : jdbcTemplate.queryForList("SELECT id, api_key FROM llm_global_config")) {
+            String raw = (String) row.get("api_key");
+            String encrypted = secretCodec.encrypt(raw);
+            if (encrypted != null && !encrypted.equals(raw)) {
+                jdbcTemplate.update("UPDATE llm_global_config SET api_key = ?, updated_at = updated_at WHERE id = ?",
+                        encrypted, row.get("id"));
+                configs++;
+            }
+        }
+        int mcpTools = 0;
+        for (var row : jdbcTemplate.queryForList("SELECT id, CAST(env AS CHAR) AS env FROM mcp_tool_config")) {
+            String raw = (String) row.get("env");
+            String encrypted = secretCodec.encryptEnv(raw);
+            if (encrypted != null && !encrypted.equals(raw)) {
+                jdbcTemplate.update("UPDATE mcp_tool_config SET env = ?, updated_at = updated_at WHERE id = ?",
+                        encrypted, row.get("id"));
+                mcpTools++;
+            }
+        }
+        if (workflows + configs + mcpTools > 0) {
+            log.warn("Schema migrated: encrypted plaintext secrets in {} workflow(s), {} global config(s), {} MCP tool(s)",
+                    workflows, configs, mcpTools);
+        }
     }
 
     private void createTableIfMissing(String tableName, String ddl) {

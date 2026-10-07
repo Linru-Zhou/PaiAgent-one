@@ -9,6 +9,7 @@ import com.paiagent.dto.AgentPlanWebSearchMcpRequest;
 import com.paiagent.dto.McpToolConfigRequest;
 import com.paiagent.entity.McpToolConfig;
 import com.paiagent.mapper.McpToolConfigMapper;
+import com.paiagent.security.SecretCodec;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -16,11 +17,13 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 @Service
 public class McpToolConfigService extends ServiceImpl<McpToolConfigMapper, McpToolConfig> {
+
+    /** 接口返回的密钥类环境变量统一显示为该占位值；前端原样回传时要还原成库里的真实值。 */
+    static final String ENV_MASK = "******";
 
     public static final String AGENT_PLAN_WEB_SEARCH = "agent_plan_web_search";
     public static final String WEB_SEARCH_TOOL_NAME = "web_search";
@@ -150,11 +153,34 @@ public class McpToolConfigService extends ServiceImpl<McpToolConfigMapper, McpTo
         config.setTransport(firstText(request.getTransport(), "stdio"));
         config.setCommand(requireText(request.getCommand(), "启动命令不能为空"));
         config.setArgs(JSON.toJSONString(request.getArgs() == null ? List.of() : request.getArgs()));
-        config.setEnv(JSON.toJSONString(request.getEnv() == null ? Map.of() : request.getEnv()));
+        config.setEnv(JSON.toJSONString(resolveEnv(request.getEnv(), parseEnv(config))));
         config.setEnabled(request.getEnabled() == null || request.getEnabled() == 1 ? 1 : 0);
         if (config.getPreset() == null) {
             config.setPreset(0);
         }
+    }
+
+    /**
+     * 回传的密钥类变量如果还是占位值 ******，说明用户没改它：换回库里的真实值；
+     * 找不到可还原的真实值（新建，或原本就没有这个变量）则拒绝，绝不把 ****** 当成密钥存下来。
+     */
+    private Map<String, String> resolveEnv(Map<String, String> requested, Map<String, String> existing) {
+        if (requested == null) {
+            return Map.of();
+        }
+        Map<String, String> resolved = new LinkedHashMap<>();
+        requested.forEach((key, value) -> {
+            if (isSecretKey(key) && ENV_MASK.equals(value)) {
+                String current = existing.get(key);
+                if (!StringUtils.hasText(current)) {
+                    throw new IllegalArgumentException("环境变量 " + key + " 的密钥无效，请重新输入完整的值");
+                }
+                resolved.put(key, current);
+            } else {
+                resolved.put(key, value);
+            }
+        });
+        return resolved;
     }
 
     private Map<String, Object> toSafeMap(McpToolConfig config) {
@@ -177,13 +203,12 @@ public class McpToolConfigService extends ServiceImpl<McpToolConfigMapper, McpTo
 
     private Map<String, String> maskEnv(Map<String, String> env) {
         Map<String, String> masked = new LinkedHashMap<>();
-        env.forEach((key, value) -> masked.put(key, isSecretKey(key) ? "******" : value));
+        env.forEach((key, value) -> masked.put(key, isSecretKey(key) ? ENV_MASK : value));
         return masked;
     }
 
     private boolean isSecretKey(String key) {
-        String upper = key.toUpperCase(Locale.ROOT);
-        return upper.contains("KEY") || upper.contains("SECRET") || upper.contains("TOKEN") || upper.contains("PASSWORD");
+        return SecretCodec.isSecretEnvKey(key);
     }
 
     private List<Long> parseIds(Object rawIds) {

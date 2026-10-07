@@ -1,6 +1,7 @@
 package com.paiagent.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.paiagent.security.EncryptedFlowDataTypeHandler;
 import lombok.Data;
 import java.time.LocalDateTime;
 
@@ -8,7 +9,7 @@ import java.time.LocalDateTime;
  * 工作流实体类
  */
 @Data
-@TableName("workflow")
+@TableName(value = "workflow", autoResultMap = true)
 public class Workflow {
     
     /**
@@ -30,6 +31,7 @@ public class Workflow {
     /**
      * 工作流配置数据(节点和连线) - JSON 格式
      */
+    @TableField(typeHandler = EncryptedFlowDataTypeHandler.class)
     private String flowData;
     
     /**

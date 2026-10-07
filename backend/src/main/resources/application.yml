@@ -114,3 +114,8 @@ paiagent:
     # 每个供应商同时在途的调用上限，超出的排队，排队超过 acquire-timeout-ms 则快速失败
     max-concurrent-per-provider: ${PAIAGENT_LLM_MAX_CONCURRENT:8}
     acquire-timeout-ms: 30000
+  security:
+    # AES-GCM 加密落库的主密钥：32 字节随机值的 Base64，或任意口令（SHA-256 派生）。
+    # 生产环境必须通过环境变量显式配置；留空则回退到本机密钥文件（仅限本地开发）。
+    encryption-key: ${PAIAGENT_ENCRYPTION_KEY:}
+    key-file: ${PAIAGENT_KEY_FILE:}

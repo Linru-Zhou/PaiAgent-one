@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.paiagent.entity.LLMGlobalConfig;
 import com.paiagent.mapper.LLMGlobalConfigMapper;
+import com.paiagent.security.SecretCodec;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -67,6 +68,7 @@ public class LLMGlobalConfigService extends ServiceImpl<LLMGlobalConfigMapper, L
     @Transactional
     public LLMGlobalConfig saveConfig(LLMGlobalConfig config) {
         normalizeConfig(config);
+        restoreMaskedApiKey(config);
         validateConfig(config);
         purgeDeletedDuplicate(config);
         ensureUniqueProviderAndConfigName(config);
@@ -96,6 +98,22 @@ public class LLMGlobalConfigService extends ServiceImpl<LLMGlobalConfigMapper, L
         }
 
         return config;
+    }
+
+    /**
+     * 前端编辑已有配置时回传的是脱敏后的密钥，这里换回库里的真实值；
+     * 新建配置却带着脱敏值说明不是用户输入的真实密钥，直接拒绝。
+     */
+    private void restoreMaskedApiKey(LLMGlobalConfig config) {
+        if (!SecretCodec.isMasked(config.getApiKey())) {
+            return;
+        }
+        LLMGlobalConfig existing = config.getId() == null ? null : this.getById(config.getId());
+        String restored = SecretCodec.restoreIfMasked(config.getApiKey(), existing == null ? null : existing.getApiKey());
+        if (restored == null) {
+            throw new IllegalArgumentException("API 密钥无效，请重新输入完整密钥");
+        }
+        config.setApiKey(restored);
     }
 
     private void purgeDeletedDuplicate(LLMGlobalConfig config) {

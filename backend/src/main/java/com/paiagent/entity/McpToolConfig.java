@@ -6,12 +6,13 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.paiagent.security.EncryptedEnvTypeHandler;
 import lombok.Data;
 
 import java.time.LocalDateTime;
 
 @Data
-@TableName("mcp_tool_config")
+@TableName(value = "mcp_tool_config", autoResultMap = true)
 public class McpToolConfig {
 
     @TableId(type = IdType.AUTO)
@@ -31,6 +32,7 @@ public class McpToolConfig {
 
     private String args;
 
+    @TableField(typeHandler = EncryptedEnvTypeHandler.class)
     private String env;
 
     private Integer enabled;

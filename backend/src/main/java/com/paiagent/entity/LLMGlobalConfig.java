@@ -1,6 +1,7 @@
 package com.paiagent.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.paiagent.security.EncryptedStringTypeHandler;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -9,7 +10,7 @@ import java.time.LocalDateTime;
  * 全局模型配置实体类，LLM 与 TTS 节点共用。
  */
 @Data
-@TableName("llm_global_config")
+@TableName(value = "llm_global_config", autoResultMap = true)
 public class LLMGlobalConfig {
 
     /**
@@ -36,6 +37,7 @@ public class LLMGlobalConfig {
     /**
      * API 密钥
      */
+    @TableField(typeHandler = EncryptedStringTypeHandler.class)
     private String apiKey;
 
     /**
