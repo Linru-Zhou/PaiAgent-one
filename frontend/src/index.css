@@ -1542,3 +1542,19 @@ select {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+
+/* ---- 执行时间线 / 续跑 / 引擎对比 ---- */
+.exec-timeline { display: flex; flex-direction: column; gap: 6px; }
+.exec-timeline-summary { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.exec-timeline-row { display: grid; grid-template-columns: 96px 1fr 56px; align-items: center; gap: 8px; font-size: 12px; }
+.exec-timeline-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #334155; }
+.exec-timeline-track { position: relative; height: 14px; background: #f1f5f9; border-radius: 4px; }
+.exec-timeline-bar { position: absolute; top: 0; height: 100%; border-radius: 4px; min-width: 3px; }
+.exec-timeline-ms { text-align: right; color: #64748b; font-variant-numeric: tabular-nums; }
+.exec-timeline-notrun { font-size: 12px; color: #94a3b8; margin-top: 4px; }
+.resume-panel { display: flex; flex-direction: column; gap: 10px; }
+.resume-field { display: flex; flex-direction: column; gap: 4px; }
+.resume-switch { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; }
+.resume-error { color: #ef4444; font-size: 12px; }
+.engine-compare { display: flex; flex-direction: column; }

@@ -15,6 +15,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import com.paiagent.engine.support.ExecutionSupport;
 import static com.paiagent.engine.support.ExecutionSupport.stripRuntimeFields;
 import static com.paiagent.engine.support.ExecutionSupport.toJson;
 
@@ -62,7 +63,7 @@ public class NodeRunner {
         long nodeStartTime = System.currentTimeMillis();
         ExecutionResponse.NodeResult nodeResult = new ExecutionResponse.NodeResult();
         nodeResult.setNodeId(node.getId());
-        nodeResult.setNodeName(node.getType());
+        nodeResult.setNodeName(ExecutionSupport.displayName(node));
         nodeResult.setInput(toJson(stripRuntimeFields(nodeInput)));
 
         Map<String, Object> rawOutput = null;
@@ -73,7 +74,7 @@ public class NodeRunner {
             snapshot = recorder.nodeStarted(record.getId(), flowId, node, nodeInput, executionOrder);
 
             if (eventCallback != null) {
-                eventCallback.accept(ExecutionEvent.nodeStart(node.getId(), node.getType()));
+                eventCallback.accept(ExecutionEvent.nodeStart(node.getId(), ExecutionSupport.displayName(node)));
             }
 
             NodeExecutor executor = executorFactory.getExecutor(node.getType());
@@ -92,7 +93,7 @@ public class NodeRunner {
                 eventData.put("input", stripRuntimeFields(nodeInput));
                 eventData.put("output", output);
                 eventData.put("duration", nodeDuration);
-                eventCallback.accept(ExecutionEvent.nodeSuccess(node.getId(), node.getType(), eventData, nodeDuration));
+                eventCallback.accept(ExecutionEvent.nodeSuccess(node.getId(), ExecutionSupport.displayName(node), eventData, nodeDuration));
             }
         } catch (Exception e) {
             log.error("节点执行失败: {}", node.getId(), e);
@@ -104,7 +105,7 @@ public class NodeRunner {
             recorder.nodeFailed(snapshot, e.getMessage(), (int) (System.currentTimeMillis() - nodeStartTime));
 
             if (eventCallback != null) {
-                eventCallback.accept(ExecutionEvent.nodeError(node.getId(), node.getType(), e.getMessage()));
+                eventCallback.accept(ExecutionEvent.nodeError(node.getId(), ExecutionSupport.displayName(node), e.getMessage()));
             }
         } finally {
             nodeResult.setDuration((int) (System.currentTimeMillis() - nodeStartTime));

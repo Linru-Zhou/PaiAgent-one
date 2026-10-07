@@ -113,6 +113,5 @@ export const useSelectedNode = (): Node | null => {
       return null;
     }
     return useWorkflowStore.getState().nodes.find((n) => n.id === id) ?? null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- data 引用变化才需要重新取节点
   }, [id, data]);
 };

@@ -199,4 +199,12 @@ public final class ExecutionSupport {
 
         return value;
     }
+
+    /** 节点对外展示的名字：优先用用户在画布上起的标签，没有才退回节点类型。 */
+    public static String displayName(com.paiagent.engine.model.WorkflowNode node) {
+        if (node.getData() != null && node.getData().get("label") instanceof String label && !label.isBlank()) {
+            return label;
+        }
+        return node.getType();
+    }
 }

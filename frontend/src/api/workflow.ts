@@ -336,7 +336,7 @@ export const executeWorkflowStream = async (
 
     const pollMs = options.recoverPollMs ?? 1500;
     const deadline = Date.now() + (options.recoverMaxMs ?? 10 * 60 * 1000);
-    onEvent({ eventType: 'NODE_PROGRESS', message: `连接中断，正在按执行编号 #${executionId} 恢复进度...`, timestamp: Date.now() });
+    onEvent({ eventType: 'RECOVERY', message: `连接中断，正在按执行编号 #${executionId} 恢复进度...`, timestamp: Date.now() });
 
     while (!controller.signal.aborted && Date.now() < deadline) {
       await sleep(pollMs);

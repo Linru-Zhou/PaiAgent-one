@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { Drawer, Input, Button, Progress, Tag, Collapse, Alert } from 'antd';
-import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, ReloadOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import AudioPlayer from './AudioPlayer';
+import ExecutionTimeline from './ExecutionTimeline';
+import ResumePanel from './ResumePanel';
+import EngineCompare from './EngineCompare';
+import { useWorkflowStore, NodeRunStatus } from '../store/workflowStore';
+import { describeResumeFailure } from '../utils/resumeRequest';
 import { buildBackendUrl } from '../config/api';
 import { estimateLlmCost, formatCost } from '../utils/llmPricing';
 import {
   ExecutionEvent,
   ExecutionNodeResult,
   ExecutionResponse as PersistedExecutionResponse,
+  ResumeExecutionRequest,
   executeWorkflowStream,
   getLatestExecution,
   resumeWorkflowExecution,
@@ -459,6 +465,8 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
   const [logs, setLogs] = useState<string[]>([]);
   const [nodeStatusMap, setNodeStatusMap] = useState<Map<string, NodeResult>>(new Map());
   const latestExecutionRequestRef = useRef(0);
+  const resumingRef = useRef(false);
+  const setRunStatus = useWorkflowStore((state) => state.setRunStatus);
 
   const addLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -598,6 +606,18 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     resetExecutionState();
   }, [workflowId]);
 
+  // 把各节点的运行状态同步到画布：运行中 / 成功 / 失败的节点会被高亮；切换工作流或关闭面板时清掉
+  useEffect(() => {
+    const results = executionResult ? executionResult.nodeResults : Array.from(nodeStatusMap.values());
+    const next: Record<string, NodeRunStatus> = {};
+    results.forEach((node) => {
+      next[node.nodeId] = node.status;
+    });
+    setRunStatus(next);
+  }, [executionResult, nodeStatusMap, setRunStatus]);
+
+  useEffect(() => () => setRunStatus({}), [workflowId, setRunStatus]);
+
   useEffect(() => {
     if (!open || executing) {
       return;
@@ -681,6 +701,10 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
               }
               break;
               
+            case 'RECOVERY':
+              addLog(`🔌 ${event.message}`);
+              break;
+
             case 'NODE_PROGRESS':
               if (event.nodeId && event.message) {
                 addProgressLog(event);
@@ -746,13 +770,19 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     }
   };
 
-  const handleResume = async () => {
+  const handleResume = async (request: ResumeExecutionRequest = {}) => {
+    if (resumingRef.current) {
+      return; // 上一次续跑还没返回，忽略重复点击
+    }
     if (!workflowId || !executionResult?.executionId) {
       addLog('❌ 错误: 缺少可恢复的执行记录');
       return;
     }
 
-    const failedNode = executionResult.nodeResults.find((node) => node.status === 'FAILED');
+    resumingRef.current = true;
+    const failedNode = request.startNodeId
+      ? undefined
+      : executionResult.nodeResults.find((node) => node.status === 'FAILED');
     setExecuting(true);
     addLog(`🔁 从执行记录 #${executionResult.executionId} 的失败断点继续执行...`);
     if (failedNode) {
@@ -786,9 +816,10 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
       const result = await resumeWorkflowExecution(workflowId, executionResult.executionId, {
         skipSuccessNodes: true,
         useSnapshotVariables: true,
+        ...request,
       });
       if (result.code !== 200) {
-        throw new Error(result.message || '断点续执行失败');
+        throw new Error(describeResumeFailure(result.code, result.message));
       }
 
       applyExecutionResult(result.data);
@@ -803,7 +834,10 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
       }
     } catch (error) {
       addLog(`❌ 断点续执行异常: ${error instanceof Error ? error.message : '未知错误'}`);
+      // 乐观地把失败节点标成了"运行中"，失败后以服务端记录为准把状态改回来
+      await syncLatestExecutionResult(workflowId);
     } finally {
+      resumingRef.current = false;
       setExecuting(false);
     }
   };
@@ -958,17 +992,6 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
           >
             {executing ? '执行中...' : '执行工作流'}
           </Button>
-          {executionResult?.status === 'FAILED' && executionResult.executionId > 0 && (
-            <Button
-              icon={<ReloadOutlined />}
-              onClick={handleResume}
-              loading={executing}
-              block
-              className="debug-run-button"
-            >
-              从失败节点继续执行
-            </Button>
-          )}
         </section>
 
         {(executing || executionResult) && (
@@ -1021,6 +1044,51 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
                 </>
               )}
             </div>
+          </section>
+        )}
+
+        {executionResult?.status === 'FAILED' && executionResult.executionId > 0 && workflowId && (
+          <section className="debug-panel-section">
+            <div className="debug-section-header">
+              <div>
+                <div className="debug-section-kicker">Resume</div>
+                <h3>断点续跑</h3>
+              </div>
+            </div>
+            <ResumePanel
+              failedNodes={currentNodeResults.filter((n) => n.status === 'FAILED').map((n) => ({ nodeId: n.nodeId, nodeName: n.nodeName, error: n.error }))}
+              allNodes={currentNodeResults.map((n) => ({ nodeId: n.nodeId, nodeName: n.nodeName }))}
+              loading={executing}
+              onResume={handleResume}
+            />
+          </section>
+        )}
+
+        {workflowId && executionResult && executionResult.executionId > 0 && (
+          <section className="debug-panel-section">
+            <div className="debug-section-header">
+              <div>
+                <div className="debug-section-kicker">Timeline</div>
+                <h3>执行时间线</h3>
+              </div>
+            </div>
+            <ExecutionTimeline
+              workflowId={workflowId}
+              executionId={executionResult.executionId}
+              refreshKey={`${executionResult.status}-${executing}`}
+            />
+          </section>
+        )}
+
+        {workflowId && (
+          <section className="debug-panel-section">
+            <div className="debug-section-header">
+              <div>
+                <div className="debug-section-kicker">Engines</div>
+                <h3>双引擎一致性对比</h3>
+              </div>
+            </div>
+            <EngineCompare workflowId={workflowId} inputData={inputData} disabled={executing} />
           </section>
         )}
 

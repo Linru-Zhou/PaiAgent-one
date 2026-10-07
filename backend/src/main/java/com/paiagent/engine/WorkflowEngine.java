@@ -445,7 +445,7 @@ public class WorkflowEngine implements WorkflowExecutor {
     private ExecutionResponse.NodeResult nodeResultFromSnapshot(ExecutionSnapshot snapshot) {
         ExecutionResponse.NodeResult nodeResult = new ExecutionResponse.NodeResult();
         nodeResult.setNodeId(snapshot.getNodeId());
-        nodeResult.setNodeName(snapshot.getNodeType());
+        nodeResult.setNodeName(snapshot.getNodeName() != null && !snapshot.getNodeName().isBlank() ? snapshot.getNodeName() : snapshot.getNodeType());
         nodeResult.setStatus(snapshot.getStatus());
         nodeResult.setInput(snapshot.getInputData());
         nodeResult.setOutput(snapshot.getOutputData());
