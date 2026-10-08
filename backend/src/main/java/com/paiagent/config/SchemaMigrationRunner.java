@@ -164,6 +164,18 @@ public class SchemaMigrationRunner implements ApplicationRunner {
                     INDEX idx_execution_id (execution_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='执行变量表'
                 """);
+        createTableIfMissing("video_generation_task", """
+                CREATE TABLE video_generation_task (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键 ID',
+                    idempotency_key VARCHAR(128) NOT NULL COMMENT '幂等键(executionId:nodeId)',
+                    task_id VARCHAR(255) NOT NULL COMMENT '服务商视频任务 ID',
+                    fingerprint VARCHAR(64) NOT NULL COMMENT '请求指纹(SHA-256)',
+                    status VARCHAR(30) NOT NULL DEFAULT 'PENDING' COMMENT '状态(PENDING/SUCCEEDED/FAILED)',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+                    UNIQUE KEY uk_video_task_idem (idempotency_key)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='视频生成任务检查点表'
+                """);
         addColumnIfMissing("llm_global_config", "embedding_model",
                 "ALTER TABLE llm_global_config ADD COLUMN embedding_model VARCHAR(100) DEFAULT NULL COMMENT '默认向量模型' AFTER tts_model");
         addColumnIfMissing("llm_global_config", "image_model",

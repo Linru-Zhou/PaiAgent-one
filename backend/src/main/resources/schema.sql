@@ -279,3 +279,15 @@ CREATE TABLE IF NOT EXISTS knowledge_index_task (
     INDEX idx_knowledge_index_task_base (knowledge_base_id),
     INDEX idx_knowledge_index_task_document (document_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库索引任务表';
+
+-- 视频生成任务检查点（轮询超时或中断后，断点续跑据此找回仍在生成的任务，避免重复提交计费）
+CREATE TABLE IF NOT EXISTS video_generation_task (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键 ID',
+    idempotency_key VARCHAR(128) NOT NULL COMMENT '幂等键(executionId:nodeId)',
+    task_id VARCHAR(255) NOT NULL COMMENT '服务商视频任务 ID',
+    fingerprint VARCHAR(64) NOT NULL COMMENT '请求指纹(SHA-256)',
+    status VARCHAR(30) NOT NULL DEFAULT 'PENDING' COMMENT '状态(PENDING/SUCCEEDED/FAILED)',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY uk_video_task_idem (idempotency_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='视频生成任务检查点表';
