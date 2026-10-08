@@ -44,6 +44,9 @@ export interface ExecutionNodeResult {
   output?: unknown;
   duration?: number;
   error?: string;
+  /** 机器可读的错误码，只有部分错误才有；据此决定交互，不要去解析 error 文案 */
+  errorCode?: string;
+  errorDetail?: Record<string, unknown>;
 }
 
 export interface ExecutionResponse {
@@ -55,6 +58,14 @@ export interface ExecutionResponse {
   duration: number;
   errorMessage?: string;
 }
+
+/** 与后端 VideoGenerateNodeExecutor 的 DecisionRequiredException.ERROR_CODE、ACTION_KEY 保持一致。 */
+export const VIDEO_TASK_PENDING_CODE = 'VIDEO_TASK_PENDING';
+export const VIDEO_TASK_ACTION_KEY = 'videoTaskAction';
+export type VideoTaskAction = 'continue' | 'regenerate';
+
+// 续跑是同步请求，视频节点最多会等 5 分钟（60 次 × 5 秒）；默认的 60 秒超时会在后端还在跑时就先报错
+const RESUME_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface ResumeExecutionRequest {
   startNodeId?: string;
@@ -154,7 +165,7 @@ export const resumeWorkflowExecution = (
     skipSuccessNodes: true,
     useSnapshotVariables: true,
     ...request,
-  });
+  }, { timeout: RESUME_TIMEOUT_MS });
 };
 
 export interface ExecutionEvent {
