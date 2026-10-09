@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Drawer, Input, Button, Progress, Tag, Collapse, Alert } from 'antd';
+import { Drawer, Input, Button, Progress, Tag, Collapse, Alert, Modal } from 'antd';
 import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -16,6 +16,9 @@ import {
   ExecutionNodeResult,
   ExecutionResponse as PersistedExecutionResponse,
   ResumeExecutionRequest,
+  VIDEO_TASK_ACTION_KEY,
+  VIDEO_TASK_PENDING_CODE,
+  VideoTaskAction,
   executeWorkflowStream,
   getLatestExecution,
   resumeWorkflowExecution,
@@ -464,6 +467,12 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [nodeStatusMap, setNodeStatusMap] = useState<Map<string, NodeResult>>(new Map());
+  // 续跑时发现上次还没结束的视频任务，等用户选"继续等待"还是"重新生成"
+  const [pendingVideoTask, setPendingVideoTask] = useState<{
+    nodeName: string;
+    taskId?: string;
+    providerStatus?: string;
+  } | null>(null);
   const latestExecutionRequestRef = useRef(0);
   const resumingRef = useRef(false);
   const setRunStatus = useWorkflowStore((state) => state.setRunStatus);
@@ -770,7 +779,7 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     }
   };
 
-  const handleResume = async (request: ResumeExecutionRequest = {}) => {
+  const handleResume = async (request: ResumeExecutionRequest = {}, videoTaskAction?: VideoTaskAction) => {
     if (resumingRef.current) {
       return; // 上一次续跑还没返回，忽略重复点击
     }
@@ -785,6 +794,9 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
       : executionResult.nodeResults.find((node) => node.status === 'FAILED');
     setExecuting(true);
     addLog(`🔁 从执行记录 #${executionResult.executionId} 的失败断点继续执行...`);
+    if (videoTaskAction) {
+      addLog(videoTaskAction === 'continue' ? '⏳ 继续等待上次未完成的视频任务' : '🔄 放弃上次的视频任务，重新生成');
+    }
     if (failedNode) {
       addLog(`📍 节点 [${failedNode.nodeName}] 重新执行...`);
       setExecutionResult((current) => current
@@ -812,11 +824,18 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
       });
     }
 
+    // 面板里用户改写的变量，与"视频任务继续等待/重新生成"的选择合并后一起提交
+    const modifiedVariables: Record<string, unknown> = {
+      ...(request.modifiedVariables || {}),
+      ...(videoTaskAction ? { [VIDEO_TASK_ACTION_KEY]: videoTaskAction } : {}),
+    };
+
     try {
       const result = await resumeWorkflowExecution(workflowId, executionResult.executionId, {
         skipSuccessNodes: true,
         useSnapshotVariables: true,
         ...request,
+        ...(Object.keys(modifiedVariables).length > 0 ? { modifiedVariables } : {}),
       });
       if (result.code !== 200) {
         throw new Error(describeResumeFailure(result.code, result.message));
@@ -824,8 +843,17 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
 
       applyExecutionResult(result.data);
       const retriedFailedNode = (result.data.nodeResults || []).find((node) => node.status === 'FAILED');
+      const pendingVideoNode = (result.data.nodeResults || []).find(
+        (node) => node.status === 'FAILED' && node.errorCode === VIDEO_TASK_PENDING_CODE,
+      );
       if (result.data.status === 'SUCCESS') {
         addLog(`✅ 断点续执行完成,状态: SUCCESS`);
+      } else if (pendingVideoNode) {
+        const detail = pendingVideoNode.errorDetail ?? {};
+        const taskId = typeof detail.taskId === 'string' ? detail.taskId : undefined;
+        const providerStatus = typeof detail.providerStatus === 'string' ? detail.providerStatus : undefined;
+        addLog(`⏸ 节点 [${pendingVideoNode.nodeName}] 上次的视频任务尚未取回结果,等待你选择继续等待或重新生成`);
+        setPendingVideoTask({ nodeName: pendingVideoNode.nodeName, taskId, providerStatus });
       } else {
         addLog(`❌ 断点续执行完成,状态: FAILED`);
         if (retriedFailedNode?.error) {
@@ -840,6 +868,11 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
       resumingRef.current = false;
       setExecuting(false);
     }
+  };
+
+  const resolvePendingVideoTask = (action: VideoTaskAction) => {
+    setPendingVideoTask(null);
+    void handleResume({}, action);
   };
 
   const getProgress = () => {
@@ -1182,6 +1215,24 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
           </div>
         </section>
       </div>
+      <Modal
+        title="发现上次未取回结果的视频任务"
+        open={pendingVideoTask !== null}
+        onCancel={() => setPendingVideoTask(null)}
+        footer={[
+          <Button key="cancel" onClick={() => setPendingVideoTask(null)}>取消</Button>,
+          <Button key="regenerate" danger onClick={() => resolvePendingVideoTask('regenerate')}>重新生成</Button>,
+          <Button key="continue" type="primary" onClick={() => resolvePendingVideoTask('continue')}>继续等待</Button>,
+        ]}
+      >
+        <p>
+          节点 [{pendingVideoTask?.nodeName}] 上次提交的视频任务
+          {pendingVideoTask?.taskId ? `（${pendingVideoTask.taskId}）` : ''}
+          尚未取回结果，服务商当前状态：{pendingVideoTask?.providerStatus ?? '未知'}。
+        </p>
+        <p>继续等待：沿用上次的任务，不再提交新任务。</p>
+        <p>重新生成：先尝试取消上次的任务，再提交一个新任务；服务商若不允许取消运行中的任务，旧任务可能仍会继续运行。</p>
+      </Modal>
     </Drawer>
   );
 };

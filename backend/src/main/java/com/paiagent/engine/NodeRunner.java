@@ -1,5 +1,6 @@
 package com.paiagent.engine;
 
+import com.paiagent.common.StructuredNodeError;
 import com.paiagent.dto.ExecutionEvent;
 import com.paiagent.dto.ExecutionResponse;
 import com.paiagent.engine.executor.NodeExecutor;
@@ -102,6 +103,10 @@ public class NodeRunner {
             nodeResult.setStatus("FAILED");
             nodeResult.setOutput(null);
             nodeResult.setError(e.getMessage());
+            if (e instanceof StructuredNodeError structured) {
+                nodeResult.setErrorCode(structured.errorCode());
+                nodeResult.setErrorDetail(structured.errorDetail());
+            }
             recorder.nodeFailed(snapshot, e.getMessage(), (int) (System.currentTimeMillis() - nodeStartTime));
 
             if (eventCallback != null) {

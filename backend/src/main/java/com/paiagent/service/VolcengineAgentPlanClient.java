@@ -131,6 +131,16 @@ public class VolcengineAgentPlanClient {
         return output;
     }
 
+    /**
+     * 取消（排队中）或删除（已结束）视频生成任务：DELETE /contents/generations/tasks/{id}。
+     * 官方文档只写了成功返回 200，没有写哪些状态可以取消，所以正在运行的任务很可能被服务商拒绝，
+     * 拒绝时抛出 IOException（带 HTTP 状态和响应体），由调用方决定怎么处理。
+     */
+    public void cancelVideoTask(ResolvedAgentPlanConfig config, String taskId) throws IOException {
+        HttpURLConnection conn = openConnection(config, "/contents/generations/tasks/" + taskId, "DELETE", config.apiKey());
+        readResponse(conn);
+    }
+
     private JSONObject postJson(ResolvedAgentPlanConfig config, String path, JSONObject body) throws IOException {
         return postJson(config, path, body, config.apiKey());
     }
