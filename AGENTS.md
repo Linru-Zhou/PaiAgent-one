@@ -18,7 +18,7 @@ cd backend
 ./mvnw test -Dtest=ClassName#methodName  # Run single test method
 ```
 
-Integration tests (`ExecutionConsistencyTest`, `ParallelSchedulingTest`, `EngineContractTest`, `SecretProtectionTest`, …) run against the real local MySQL (root/123456, db `paiagent`) and clean up after themselves. The build needs JDK 21 — on some machines `/usr/libexec/java_home -v 21` silently returns another JDK, so set `JAVA_HOME` explicitly. `VideoGenerateNodeExecutorTest` is known to be broken (Mockito misuse, ~6 min) and can be excluded with `-Dtest='!VideoGenerateNodeExecutorTest'`.
+Integration tests (`ExecutionConsistencyTest`, `ParallelSchedulingTest`, `EngineContractTest`, `SecretProtectionTest`, …) run against the real local MySQL (root/123456, db `paiagent`) and clean up after themselves. The build needs JDK 21 — on some machines `/usr/libexec/java_home -v 21` silently returns another JDK, so set `JAVA_HOME` explicitly.
 
 ### Frontend (React + Vite)
 ```bash
@@ -62,6 +62,7 @@ mysql -u root -p < backend/src/main/resources/schema.sql
 - `NodeRunner.java` / `ExecutionRecorder.java` / `support/ExecutionSupport.java`: node execution, persistence (snapshots, status CAS) and shared semantics used by both engines
 - `ExecutionDispatcher.java`: bounded execution pool; overload is rejected fast (HTTP code 429) instead of queueing without limit
 - `StaleExecutionReaper.java`: marks RUNNING executions with no heartbeat as FAILED so they can be resumed
+- `service/VideoTaskCheckpointService.java` + `VideoGenerateNodeExecutor`: persists the provider `taskId` with a request fingerprint (`video_generation_task`) so resuming a timed-out video node reuses the old task instead of submitting (and paying for) a new one. Same parameters → fail fast with the structured error code `VIDEO_TASK_PENDING` and let the UI ask continue/regenerate; changed parameters → cancel the old task and resubmit. The choice travels in the resume request's `modifiedVariables`
 - `skill/`: Skills system with YAML Frontmatter + Markdown declarations, three-level progressive loading
 - `executor/NodeExecutor.java`: Interface for all node executors
 - `executor/NodeExecutorFactory.java`: Factory pattern to get executors by node type
