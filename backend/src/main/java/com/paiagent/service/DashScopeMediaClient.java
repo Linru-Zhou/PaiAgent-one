@@ -29,6 +29,10 @@ import java.util.regex.Pattern;
  * 与配音、对话共用同一个百炼 API Key 和同一个地址（https://dashscope.aliyuncs.com/api/v1）。
  *
  * 取消：POST /tasks/{id}/cancel，官方说明只有 PENDING（排队中）的任务可以取消，运行中的会被拒绝。
+ *
+ * 提示词改写（prompt_extend）一律显式关闭：万相默认会先把提示词改写一遍，实测它会自行加入提示词里没有的文字
+ * （例如把 ConcurrentModificationException 写进画面，结果是一串乱码）和不准确的技术细节（把 JDK8 的
+ * ConcurrentHashMap 画成 JDK7 的分段锁）。要润色提示词，请在工作流里用可见的 LLM 节点做，调试面板里能看到它改成了什么。
  */
 @Slf4j
 @Service
@@ -119,6 +123,7 @@ public class DashScopeMediaClient implements VideoTaskClient {
         JSONObject parameters = new JSONObject();
         parameters.put("size", imageSize(size));
         parameters.put("n", Math.max(1, Math.min(count, 4)));
+        parameters.put("prompt_extend", false);
         JSONObject request = new JSONObject();
         request.put("model", model);
         request.put("input", input);
@@ -167,6 +172,7 @@ public class DashScopeMediaClient implements VideoTaskClient {
         if (supportsConfigurableDuration(effectiveModel)) {
             parameters.put("duration", duration);
         }
+        parameters.put("prompt_extend", false);
         JSONObject request = new JSONObject();
         request.put("model", effectiveModel);
         request.put("input", input);

@@ -3,6 +3,7 @@ package com.paiagent.engine.executor.impl;
 import com.paiagent.engine.model.WorkflowNode;
 import com.paiagent.service.AgentPlanConfigResolver;
 import com.paiagent.service.DashScopeMediaClient;
+import com.paiagent.service.ImageTextOverlay;
 import com.paiagent.service.MinioService;
 import com.paiagent.service.ResolvedAgentPlanConfig;
 import com.paiagent.service.StepFunImageClient;
@@ -24,6 +25,7 @@ public class ImageGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
     private final VolcengineAgentPlanClient agentPlanClient;
     private final StepFunImageClient stepFunImageClient;
     private final MinioService minioService;
+    private final ImageTextOverlay textOverlay = new ImageTextOverlay();
 
     /** 通义万相（百炼）的客户端；测试里手动构造执行器时没有。 */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
@@ -50,6 +52,14 @@ public class ImageGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
             throw new IllegalArgumentException("图片生成节点缺少 prompt");
         }
 
+        // 要在图上叠加的文字（输入配置里名为 overlayText 的参数，可以是固定文字或引用上游节点）。
+        // 付费生图之前先确认能画出来：否则图片生成完才发现没有字体，钱就白花了
+        String overlayText = configuredTextInput(node, input, "overlayText");
+        if (overlayText == null) {
+            overlayText = stringData(node, "overlayText", null);
+        }
+        textOverlay.assertCanDraw(overlayText);
+
         ResolvedAgentPlanConfig config = configResolver.resolveImageConfig(node);
         configResolver.validateApiConfig(config, "图片生成");
 
@@ -69,11 +79,22 @@ public class ImageGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
 
         List<String> sourceUrls = (List<String>) result.getOrDefault("imageUrls", List.of());
         List<String> persistedUrls = new ArrayList<>();
+        boolean overlay = StringUtils.hasText(overlayText) && !ImageTextOverlay.lines(overlayText).isEmpty();
         for (String sourceUrl : sourceUrls) {
-            persistedUrls.add(persistMedia(sourceUrl, "images/generated-" + System.currentTimeMillis() + ".png", "image/png"));
+            String objectName = "images/generated-" + System.currentTimeMillis() + ".png";
+            if (overlay) {
+                // 模型画的字不可靠，这里由代码用真字体把标题写上去；失败就让节点失败，不能交付一张缺标题的图
+                byte[] composed = textOverlay.drawOnUrl(sourceUrl, overlayText, stringData(node, "overlayPosition", "top"));
+                persistedUrls.add(minioService.uploadFromBytes(composed, objectName, "image/png"));
+            } else {
+                persistedUrls.add(persistMedia(sourceUrl, objectName, "image/png"));
+            }
         }
 
         Map<String, Object> output = new LinkedHashMap<>();
+        if (overlay) {
+            output.put("overlayText", overlayText);
+        }
         output.put("imageUrl", persistedUrls.isEmpty() ? null : persistedUrls.get(0));
         output.put("imageUrls", persistedUrls);
         output.put("prompt", prompt);

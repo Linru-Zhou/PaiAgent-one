@@ -2681,6 +2681,28 @@ const EditorPage = () => {
 	                            onChange={(e) => updateSelectedNodeData({ referenceImageUrl: e.target.value })}
 	                          />
 	                        </Form.Item>
+	                        <Form.Item label="图上文字（可选）">
+	                          <Input.TextArea
+	                            rows={2}
+	                            placeholder={'第一行是大标题，其余行是副标题，例如：\nHashMap 并发不安全\nConcurrentHashMap'}
+	                            value={(selectedNode.data?.overlayText as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ overlayText: e.target.value })}
+	                          />
+	                          <Select
+	                            style={{ width: 140, marginTop: 8 }}
+	                            value={(selectedNode.data?.overlayPosition as string) || 'top'}
+	                            onChange={(value) => updateSelectedNodeData({ overlayPosition: value })}
+	                            options={[
+	                              { value: 'top', label: '文字在顶部' },
+	                              { value: 'center', label: '文字居中' },
+	                              { value: 'bottom', label: '文字在底部' }
+	                            ]}
+	                          />
+	                          <div className="workflow-field-hint">
+	                            生图模型写字不可靠（中文会写成别的字，ConcurrentHashMap 这类长英文几乎必错），所以文字由程序用真字体画到图上，保证一字不差。
+	                            用了这项，图片提示词里请写"画面中不要出现任何文字"，并给文字位置留出空白。要引用上游节点的输出，请在上方输入配置里添加名为 overlayText 的引用参数。
+	                          </div>
+	                        </Form.Item>
 	                        <Form.Item label="尺寸">
 	                          {selectedToolProvider === 'step' ? (
 	                            <Select

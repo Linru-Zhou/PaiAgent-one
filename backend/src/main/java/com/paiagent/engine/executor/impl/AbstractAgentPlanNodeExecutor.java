@@ -50,6 +50,10 @@ abstract class AbstractAgentPlanNodeExecutor implements NodeExecutor {
             }
             if ("reference".equals(type)) {
                 String referenceNode = asText(param.get("referenceNode"));
+                String exact = exactReference(input, referenceNode);
+                if (exact != null) {
+                    return exact;
+                }
                 String referenceKey = extractReferenceKey(referenceNode);
                 if (StringUtils.hasText(referenceKey)) {
                     String value = asText(input.get(referenceKey));
@@ -86,6 +90,26 @@ abstract class AbstractAgentPlanNodeExecutor implements NodeExecutor {
                 output.put(name, value);
             }
         }
+    }
+
+    /**
+     * 按"节点 id.键名"精确取值。上游输入是各入边来源输出合并出来的，两个上游都有 output 时后来的会盖掉先来的，
+     * 只按键名取就可能取到另一个节点的输出（比如封面节点同时引用"提示词"和"标题"两个 LLM 节点的 output）。
+     * 引擎把所有已完成节点的输出放在 __nodeOutputs__ 里，先从那里按节点 id 取；取不到（节点被跳过、
+     * 没有执行上下文的单测）再退回按键名取。
+     */
+    private String exactReference(Map<String, Object> input, String referenceNode) {
+        if (input == null || !StringUtils.hasText(referenceNode) || !referenceNode.contains(".")) {
+            return null;
+        }
+        if (!(input.get("__nodeOutputs__") instanceof Map<?, ?> all)) {
+            return null;
+        }
+        int dot = referenceNode.lastIndexOf('.');
+        if (!(all.get(referenceNode.substring(0, dot)) instanceof Map<?, ?> nodeOutput)) {
+            return null;
+        }
+        return asText(nodeOutput.get(referenceNode.substring(dot + 1)));
     }
 
     private String extractReferenceKey(String referenceNode) {

@@ -24,6 +24,13 @@ export const renderCanvasToPng = async (nodes: Node[], options: { scale?: number
   if (!viewport || nodes.length === 0) {
     throw new Error('画布上没有可导出的内容');
   }
+  // ReactFlow 在测量完节点尺寸之前把节点设成 visibility:hidden；页面在后台时浏览器不触发测量，
+  // 这时导出会得到一张空白图，却照样提示"已保存"。宁可报错也不要落一张空白文件。
+  const notRendered = Array.from(viewport.querySelectorAll('.react-flow__node'))
+    .some((element) => getComputedStyle(element).visibility === 'hidden');
+  if (notRendered) {
+    throw new Error('画布还没渲染完成（页面在后台或刚打开时，节点尚未测量），请切回本页面稍候再导出');
+  }
   const scale = options.scale ?? 2;
   const bounds = getNodesBounds(nodes);
   const padding = options.padding ?? 48;

@@ -96,6 +96,8 @@ class DashScopeMediaClientTest {
         assertEquals("模糊", body.getJSONObject("input").getString("negative_prompt"));
         assertEquals("1024*1024", body.getJSONObject("parameters").getString("size"), "1024x1024 要转成万相的 1024*1024");
         assertEquals(2, body.getJSONObject("parameters").getIntValue("n"));
+        assertFalse(body.getJSONObject("parameters").getBooleanValue("prompt_extend", true),
+                "必须显式关闭提示词改写：万相默认开启，会往画面里加提示词没有的乱码文字");
         assertNull(calls.get(1).asyncHeader(), "轮询不需要异步头");
         assertEquals("/tasks/img-1", calls.get(1).path());
     }
@@ -151,6 +153,11 @@ class DashScopeMediaClientTest {
         JSONObject t2v = DashScopeMediaClient.videoRequest("wan2.2-t2v-plus", "p", null, 5, null, null);
         assertEquals("832*480", t2v.getJSONObject("parameters").getString("size"), "默认 480p 16:9，最省钱");
         assertFalse(t2v.getJSONObject("parameters").containsKey("duration"), "wan2.2 固定 5 秒，传 duration 可能被拒");
+
+        for (JSONObject request : List.of(i2v, t2v)) {
+            assertFalse(request.getJSONObject("parameters").getBooleanValue("prompt_extend", true),
+                    "视频也要显式关闭提示词改写，否则会被改写成与口播稿无关的内容");
+        }
     }
 
     @Test
