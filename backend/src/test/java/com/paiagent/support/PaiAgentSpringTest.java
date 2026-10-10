@@ -22,7 +22,9 @@ import java.lang.annotation.Target;
         "minio.publicUrl=http://localhost:9000",
         "spring.ai.openai.api-key=sk-test-placeholder",
         "spring.datasource.password=123456",
-        "paiagent.memory.sqlite-path=target/test-data/agent-memory-test.db"
+        "paiagent.memory.sqlite-path=target/test-data/agent-memory-test.db",
+        // 测试产生的执行结果写到 target 下，不污染仓库根目录的 outputs/
+        "paiagent.output.dir=target/test-outputs"
 })
 @Import(TestNodeExecutors.class)
 public @interface PaiAgentSpringTest {

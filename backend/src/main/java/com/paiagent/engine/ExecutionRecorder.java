@@ -29,6 +29,10 @@ public class ExecutionRecorder {
     private final ExecutionRecordMapper executionRecordMapper;
     private final ExecutionSnapshotMapper executionSnapshotMapper;
 
+    /** 执行结束后把结果和产物对应关系写到可见的输出文件夹；可选，测试里手动构造时没有。 */
+    @Autowired(required = false)
+    private com.paiagent.service.ExecutionResultExporter resultExporter;
+
     @Autowired
     public ExecutionRecorder(ExecutionRecordMapper executionRecordMapper,
                              @Autowired(required = false) ExecutionSnapshotMapper executionSnapshotMapper) {
@@ -57,6 +61,9 @@ public class ExecutionRecorder {
         record.setErrorMessage(errorMessage);
         record.setDuration(duration);
         executionRecordMapper.updateById(record);
+        if (resultExporter != null) {
+            resultExporter.export(record.getId(), flowId, status, inputData, outputData, nodeResultsJson, errorMessage, duration);
+        }
     }
 
     public void heartbeat(Long executionId) {

@@ -164,6 +164,16 @@ export const getExecution = (id: number, executionId: number): Promise<ApiResult
 };
 
 /**
+ * 把画布导出的流程图 PNG（data URL）连同流程 JSON 保存到后端的可见输出文件夹，返回保存路径。
+ */
+export const saveWorkflowImage = (
+  id: number,
+  png: string
+): Promise<ApiResult<{ image: string; flowJson?: string }>> => {
+  return api.post(`/api/workflows/${id}/export-image`, { png }, { timeout: 120000 });
+};
+
+/**
  * 获取最近一次执行记录
  */
 export const getLatestExecution = (id: number): Promise<ApiResult<ExecutionResponse | null>> => {

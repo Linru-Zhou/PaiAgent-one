@@ -143,6 +143,7 @@ Key features:
 
 ## Development Notes
 
+- Artifacts: TTS audio and generated images/videos are uploaded to MinIO (bucket `paiagent`; MinIO stores objects in its own internal format, so they cannot be browsed as plain files). `MinioService` therefore also saves every artifact into a visible folder — `paiagent.output.dir` / `PAIAGENT_OUTPUT_DIR`, default `<repo>/outputs/` (git-ignored; blank disables) — mirroring the object name (`audio/…`, `images/…`, `videos/…`), and `ExecutionResultExporter` writes `outputs/executions/exec-<id>/result.json` (final output, per-node status/output, and url → local file mapping, never API keys). The editor's "导出图片" button renders the canvas to a 2× PNG in the browser and `POST /api/workflows/{id}/export-image` stores it with the (masked) flow JSON in `outputs/workflows/`.
 - TTS: `qwen3-tts-flash` uses the HTTP `MultiModalConversation` API with enum voices (Cherry…); the `qwen-audio-3.x-tts-flash` family uses a different API — WebSocket `ttsv2.SpeechSynthesizer` with string voice ids (`longanhuan_v3.1`, `Emily_v3.1`…, case-sensitive). The node picks the path by model name (`QwenAudioTtsSupport`). Beijing-region address per the Bailian docs: `wss://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference`. The audio path has not been exercised against the real service in this repo (no API key)
 
 - Backend API requires JWT token in `Authorization` header (Bearer scheme)

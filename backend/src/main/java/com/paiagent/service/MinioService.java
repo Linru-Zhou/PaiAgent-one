@@ -12,6 +12,9 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 @Slf4j
 @Service
@@ -22,6 +25,10 @@ public class MinioService {
     
     @Autowired
     private MinioConfig minioConfig;
+
+    /** 产物的本地可见副本（见 OutputFolder）；测试里可能不存在。 */
+    @Autowired(required = false)
+    private OutputFolder outputFolder;
     
     /**
      * 确保 bucket 存在
@@ -77,14 +84,25 @@ public class MinioService {
      */
     public String uploadFromUrl(String fileUrl, String objectName, String contentType) throws Exception {
         log.info("从 URL 下载文件: {}", fileUrl);
-        
-        URL url = new URL(fileUrl);
-        try (InputStream inputStream = url.openStream()) {
-            long size = url.openConnection().getContentLengthLong();
-            return uploadFile(objectName, inputStream, contentType, size);
+
+        // 先完整下载到临时文件：既能存一份本地可见副本，也能拿到准确的大小再上传
+        // （原来为了取大小要再请求一次 URL，而且大小未知时 putObject 会失败）
+        Path temp = Files.createTempFile("paiagent-artifact-", ".tmp");
+        try {
+            try (InputStream inputStream = new URL(fileUrl).openStream()) {
+                Files.copy(inputStream, temp, StandardCopyOption.REPLACE_EXISTING);
+            }
+            if (outputFolder != null) {
+                outputFolder.saveFile(objectName, temp);
+            }
+            try (InputStream inputStream = Files.newInputStream(temp)) {
+                return uploadFile(objectName, inputStream, contentType, Files.size(temp));
+            }
+        } finally {
+            Files.deleteIfExists(temp);
         }
     }
-    
+
     /**
      * 从字节数组上传到 MinIO
      * @param data 字节数组
@@ -94,6 +112,9 @@ public class MinioService {
      */
     public String uploadFromBytes(byte[] data, String objectName, String contentType) throws Exception {
         log.info("从字节数组上传文件到 MinIO: {}, 大小: {} bytes", objectName, data.length);
+        if (outputFolder != null) {
+            outputFolder.saveBytes(objectName, data); // 先存本地副本：即使 MinIO 不可用，产物也不会丢
+        }
         
         try (ByteArrayInputStream inputStream = new ByteArrayInputStream(data)) {
             return uploadFile(objectName, inputStream, contentType, data.length);

@@ -119,3 +119,8 @@ paiagent:
     # 生产环境必须通过环境变量显式配置；留空则回退到本机密钥文件（仅限本地开发）。
     encryption-key: ${PAIAGENT_ENCRYPTION_KEY:}
     key-file: ${PAIAGENT_KEY_FILE:}
+  output:
+    # 产物（音频 / 图片 / 视频）和每次执行结果的本地可见文件夹。MinIO 把对象存成内部格式，没法直接在 Finder 里打开，
+    # 所以每个产物上传的同时再存一份到这里。相对路径以后端的启动目录（backend/）为基准，默认是仓库根目录下的 outputs/。
+    # 留空则关闭。
+    dir: ${PAIAGENT_OUTPUT_DIR:../outputs}

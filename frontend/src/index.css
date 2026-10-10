@@ -1558,3 +1558,7 @@ select {
 .resume-switch { flex-direction: row; align-items: center; gap: 8px; font-size: 13px; }
 .resume-error { color: #ef4444; font-size: 12px; }
 .engine-compare { display: flex; flex-direction: column; }
+
+.workflow-export-btn { padding: 4px 12px; font-size: 12px; color: #334155; background: #ffffff; border: 1px solid #dce4ef; border-radius: 6px; cursor: pointer; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08); }
+.workflow-export-btn:hover { border-color: #2563eb; color: #2563eb; }
+.workflow-export-btn:disabled { opacity: 0.6; cursor: wait; }

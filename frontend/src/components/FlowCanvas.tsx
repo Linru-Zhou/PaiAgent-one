@@ -1,4 +1,5 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
+import { message } from 'antd';
 import {
   ReactFlow,
   Background,
@@ -9,6 +10,7 @@ import {
   Handle,
   Position,
   useReactFlow,
+  Panel,
   BaseEdge,
   EdgeToolbar,
   NodeResizer,
@@ -18,6 +20,8 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useWorkflowStore } from '../store/workflowStore';
+import { renderCanvasToPng } from '../utils/exportCanvasImage';
+import { saveWorkflowImage } from '../api/workflow';
 import { WORKFLOW_EDGE_MARKER, WORKFLOW_EDGE_STYLE, WORKFLOW_EDGE_TYPE } from '../utils/workflowEdge';
 
 interface FlowCanvasProps {
@@ -262,6 +266,46 @@ const edgeTypes = {
 };
 
 /**
+ * 导出流程图：渲染成 2 倍分辨率的 PNG，下载到浏览器，并在已保存的工作流上同时存一份到后端的可见输出文件夹。
+ */
+const ExportImageButton = () => {
+  const { getNodes } = useReactFlow();
+  const workflowId = useWorkflowStore((state) => state.currentWorkflowId);
+  const [busy, setBusy] = useState(false);
+
+  const handleExport = async () => {
+    setBusy(true);
+    try {
+      const png = await renderCanvasToPng(getNodes());
+      const link = document.createElement('a');
+      link.href = png;
+      link.download = `workflow-${workflowId ?? 'draft'}.png`;
+      link.click();
+      if (workflowId) {
+        const result = await saveWorkflowImage(workflowId, png);
+        if (result.code === 200) {
+          message.success(`流程图已保存：${result.data.image}`);
+          return;
+        }
+      }
+      message.success('流程图已导出');
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel position="top-right">
+      <button type="button" className="workflow-export-btn" onClick={handleExport} disabled={busy} title="把当前流程图导出为高清 PNG">
+        {busy ? '导出中…' : '导出图片'}
+      </button>
+    </Panel>
+  );
+};
+
+/**
  * 中间画布组件。
  * nodes / edges 的唯一数据源是 Zustand store，ReactFlow 以受控模式直接读写它，
  * 这里不再保留本地副本，也就不需要任何"回声标记"或 setTimeout 来同步。
@@ -335,6 +379,7 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
         snapToGrid
         snapGrid={[16, 16]}
       >
+        <ExportImageButton />
         <Background color="#d8dee9" gap={18} size={1.2} />
         <Controls className="workflow-controls" />
         <MiniMap
