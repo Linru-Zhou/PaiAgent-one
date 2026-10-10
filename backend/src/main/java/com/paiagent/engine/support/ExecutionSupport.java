@@ -207,4 +207,18 @@ public final class ExecutionSupport {
         }
         return node.getType();
     }
+
+    /** 并发执行的节点会从不同线程回调事件，而 SseEmitter 不是线程安全的，这里统一串行化。 */
+    public static java.util.function.Consumer<com.paiagent.dto.ExecutionEvent> synchronizedCallback(
+            java.util.function.Consumer<com.paiagent.dto.ExecutionEvent> callback) {
+        if (callback == null) {
+            return null;
+        }
+        Object lock = new Object();
+        return event -> {
+            synchronized (lock) {
+                callback.accept(event);
+            }
+        };
+    }
 }

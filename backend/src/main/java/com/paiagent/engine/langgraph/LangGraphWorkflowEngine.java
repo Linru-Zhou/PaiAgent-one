@@ -11,6 +11,7 @@ import com.paiagent.engine.langgraph.state.StateManager;
 import com.paiagent.engine.model.WorkflowConfig;
 import com.paiagent.engine.model.WorkflowEdge;
 import com.paiagent.engine.model.WorkflowNode;
+import com.paiagent.engine.support.ExecutionSupport;
 import com.paiagent.engine.support.ExecutionSupport.EdgeIndexes;
 import com.paiagent.entity.ExecutionRecord;
 import com.paiagent.entity.Workflow;
@@ -30,12 +31,12 @@ import static com.paiagent.engine.support.ExecutionSupport.stripRuntimeFields;
 import static com.paiagent.engine.support.ExecutionSupport.toJson;
 
 /**
- * LangGraph 工作流引擎：用 LangGraph4j 的 StateGraph 作为运行时，节点按拓扑序串行执行。
+ * LangGraph 工作流引擎：用 LangGraph4j 的 StateGraph 作为运行时；同一依赖层的节点用 LangGraph4j 原生的并行分支并发执行。
  *
  * 与 DAG 引擎共用同一套执行语义（见 EngineContractTest 的契约测试）：
  * 同样的图校验（有环/悬空连线直接拒绝，不留执行记录）、执行一开始就有 RUNNING 记录和执行 ID、
  * 每个节点都有快照和心跳、条件分支只走命中的路径、节点失败立即中止并报告失败节点。
- * 区别只有一点：LangGraph 引擎串行执行，不做同层并发。
+ * 两个引擎共用同一个节点线程池和 paiagent.engine.parallel-enabled 开关，行为差异只在"由谁来调度"。
  */
 @Slf4j
 @Service
@@ -77,13 +78,15 @@ public class LangGraphWorkflowEngine implements WorkflowExecutor {
             eventCallback.accept(ExecutionEvent.workflowStart(record.getId()));
         }
 
-        LangGraphRunContext ctx = new LangGraphRunContext(record, workflow.getId(), sortedNodes, indexes, eventCallback, inputData);
+        // 并行分支里的节点会从不同线程回调事件，SseEmitter 不是线程安全的，统一串行化
+        Consumer<ExecutionEvent> safeCallback = ExecutionSupport.synchronizedCallback(eventCallback);
+        LangGraphRunContext ctx = new LangGraphRunContext(record, workflow.getId(), sortedNodes, indexes, safeCallback, inputData);
         String status = "SUCCESS";
         String errorMessage = null;
         String outputData = null;
 
         try {
-            CompiledGraph<AgentState> graph = graphBuilder.buildGraph(sortedNodes, ctx);
+            CompiledGraph<AgentState> graph = graphBuilder.buildGraph(dagParser.groupIntoLevels(sortedNodes, edges), ctx);
             graph.invoke(stateManager.initializeState(inputData));
 
             if (ctx.failure != null) {
@@ -103,8 +106,8 @@ public class LangGraphWorkflowEngine implements WorkflowExecutor {
         nodeResults.sort(Comparator.comparingInt(r -> ctx.sortedIndex.getOrDefault(r.getNodeId(), Integer.MAX_VALUE)));
 
         int duration = (int) (System.currentTimeMillis() - startTime);
-        if (eventCallback != null) {
-            eventCallback.accept(ExecutionEvent.workflowComplete(status, ctx.currentInput, duration));
+        if (safeCallback != null) {
+            safeCallback.accept(ExecutionEvent.workflowComplete(status, ctx.currentInput, duration));
         }
         recorder.finish(record, workflow.getId(), inputData, status, outputData, toJson(nodeResults), errorMessage, duration);
 

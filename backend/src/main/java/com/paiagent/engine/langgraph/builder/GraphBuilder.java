@@ -17,66 +17,83 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 图构建器：把工作流构建成 LangGraph StateGraph。
+ * 图构建器：把工作流按"依赖层"构建成 LangGraph StateGraph，同一层的节点用 LangGraph4j 原生的并行分支执行。
  *
- * 为什么不把工作流的连线一对一翻译成 StateGraph 的边：LangGraph4j 1.8.0-beta3 不支持同一节点的多条普通出边
- * （addEdge 第二条同源边直接抛 "edge with id: x already exist!"），所以任何带扇出或条件分支两个出口的工作流都建不出图。
- * 这里改为：节点按拓扑顺序注册，START 连第一个节点，每个节点挂一条条件边，
- * 路由函数在运行时给出"拓扑序里下一个没被条件分支跳过的节点"（失败时给 END）。
- * 这样任意 DAG 都能表达，执行顺序和语义与 DAG 引擎的串行模式一致（LangGraph 引擎本身不并发）。
+ * 为什么不把工作流的连线一对一翻译成 StateGraph 的边：LangGraph4j 的并行分支有三条硬约束
+ * （用 1.8.0-beta3 实测）——所有并行分支必须汇合到同一个节点、并行分支里不能有条件边、每条并行分支只能是单个节点。
+ * 真实工作流经常违反这些约束（分支里串多个节点、分支里有条件节点、条件的每个出口再扇出）。
+ *
+ * 所以这里按依赖层来搭图（与 DAG 引擎的分层完全一致），层与层之间用"屏障"隔开：
+ *
+ *   上一层出口 --条件边(失败→END)--> [fan_L] ==并行边==> 节点1..k ==> [join_L] --条件边--> 下一层入口
+ *
+ * - 一层只有一个节点：直接放节点，没有屏障；
+ * - 一层有多个节点：fan_L 同时连向本层所有节点（并行分支），每个节点只连一条边到同一个 join_L，满足上述三条约束；
+ * - 条件分支的"跳过"不用 LangGraph 的条件边表达，而是由节点自己判断（NodeAdapter 里按 skipped 集合直接空跑），
+ *   所以条件节点可以放在任意一层、和别的节点并行，不会触发"并行分支里不能有条件边"；
+ * - 层与层之间的条件边只做一件事：已经失败就直接走 END。
+ * 这样语义与 DAG 引擎一致（EngineContractTest 逐项验证），并且层内真正并行。
  */
 @Slf4j
 @Component
 public class GraphBuilder {
 
+    static final String FAN_PREFIX = "lg_barrier_fan_";
+    static final String JOIN_PREFIX = "lg_barrier_join_";
+
     @Autowired
     private NodeAdapter nodeAdapter;
 
-    public CompiledGraph<AgentState> buildGraph(List<WorkflowNode> sortedNodes, LangGraphRunContext ctx) throws GraphStateException {
-        if (sortedNodes == null || sortedNodes.isEmpty()) {
+    public CompiledGraph<AgentState> buildGraph(List<List<WorkflowNode>> levels, LangGraphRunContext ctx) throws GraphStateException {
+        if (levels == null || levels.isEmpty()) {
             throw new IllegalArgumentException("工作流没有任何节点");
         }
-        log.info("开始构建 LangGraph: 节点数={}", sortedNodes.size());
+        int levelCount = levels.size();
+        log.info("开始构建 LangGraph: 层数={}", levelCount);
 
         StateGraph<AgentState> graph = new StateGraph<>(AgentState::new);
-        for (WorkflowNode node : sortedNodes) {
-            graph.addNode(node.getId(), nodeAdapter.adaptNode(node, ctx));
-        }
+        String[] entry = new String[levelCount];
+        String[] exit = new String[levelCount];
 
-        graph.addEdge(StateGraph.START, sortedNodes.get(0).getId());
-        for (int i = 0; i < sortedNodes.size(); i++) {
-            String nodeId = sortedNodes.get(i).getId();
-            if (i == sortedNodes.size() - 1) {
-                graph.addEdge(nodeId, StateGraph.END);
+        for (int l = 0; l < levelCount; l++) {
+            List<WorkflowNode> level = levels.get(l);
+            if (level.size() == 1) {
+                WorkflowNode node = level.get(0);
+                graph.addNode(node.getId(), nodeAdapter.adaptNode(node, ctx, true));
+                entry[l] = node.getId();
+                exit[l] = node.getId();
                 continue;
             }
-            Map<String, String> routes = new LinkedHashMap<>();
-            for (int j = i + 1; j < sortedNodes.size(); j++) {
-                routes.put(sortedNodes.get(j).getId(), sortedNodes.get(j).getId());
+            String fan = FAN_PREFIX + l;
+            String join = JOIN_PREFIX + l;
+            graph.addNode(fan, nodeAdapter.passThrough());
+            graph.addNode(join, nodeAdapter.levelBarrier(level, ctx));
+            for (WorkflowNode node : level) {
+                graph.addNode(node.getId(), nodeAdapter.adaptNode(node, ctx, false));
+                graph.addEdge(fan, node.getId());
+                graph.addEdge(node.getId(), join);
             }
+            entry[l] = fan;
+            exit[l] = join;
+        }
+
+        graph.addEdge(StateGraph.START, entry[0]);
+        for (int l = 0; l < levelCount; l++) {
+            if (l == levelCount - 1) {
+                graph.addEdge(exit[l], StateGraph.END);
+                continue;
+            }
+            final String next = entry[l + 1];
+            Map<String, String> routes = new LinkedHashMap<>();
+            routes.put(next, next);
             routes.put(StateGraph.END, StateGraph.END);
-            final int current = i;
-            graph.addConditionalEdges(nodeId,
-                    state -> CompletableFuture.completedFuture(nextRunnable(sortedNodes, ctx, current)),
+            graph.addConditionalEdges(exit[l],
+                    state -> CompletableFuture.completedFuture(ctx.failure != null ? StateGraph.END : next),
                     routes);
         }
 
         CompiledGraph<AgentState> compiled = graph.compile();
         log.info("LangGraph 构建完成");
         return compiled;
-    }
-
-    /** 拓扑序里第 current 个节点之后，下一个没被跳过的节点；已经失败则直接结束。 */
-    private String nextRunnable(List<WorkflowNode> sortedNodes, LangGraphRunContext ctx, int current) {
-        if (ctx.failure != null) {
-            return StateGraph.END;
-        }
-        for (int j = current + 1; j < sortedNodes.size(); j++) {
-            String id = sortedNodes.get(j).getId();
-            if (!ctx.skipped.contains(id)) {
-                return id;
-            }
-        }
-        return StateGraph.END;
     }
 }

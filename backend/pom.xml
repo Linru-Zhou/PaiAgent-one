@@ -93,10 +93,13 @@
       <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
       <version>${spring-ai.version}</version>
     </dependency>
+    <!-- 显式声明真正使用的 core 版本。之前这里是 langgraph4j-core-jdk8:1.1.5：它和 1.8.0-beta3 的 core 含有同名类
+         org.bsc.langgraph4j.StateGraph，且在类路径上排在前面，导致项目实际一直跑在旧的 1.1.5 上
+         （没有并行分支支持），而不是 langgraph4j-spring-ai 所依赖的 1.8.0-beta3。 -->
     <dependency>
       <groupId>org.bsc.langgraph4j</groupId>
-      <artifactId>langgraph4j-core-jdk8</artifactId>
-      <version>1.1.5</version>
+      <artifactId>langgraph4j-core</artifactId>
+      <version>1.8.0-beta3</version>
     </dependency>
     <dependency>
       <groupId>org.bsc.langgraph4j</groupId>

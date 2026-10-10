@@ -75,11 +75,12 @@ class LangGraphBasicTest {
         StateGraph<AgentState> graph = new StateGraph<>(AgentState::new);
         
         // 添加一个简单节点
-        graph.addNode("test", state -> 
+        // 1.8.0-beta3 的 addNode 有多个重载，隐式 lambda 会有歧义，需要显式声明类型
+        org.bsc.langgraph4j.action.AsyncNodeAction<AgentState> action = state ->
             java.util.concurrent.CompletableFuture.completedFuture(
-                Map.of("message", "Hello LangGraph")
-            )
-        );
+                Map.<String, Object>of("message", "Hello LangGraph")
+            );
+        graph.addNode("test", action);
         
         // 设置入口点
         graph.addEdge(StateGraph.START, "test");

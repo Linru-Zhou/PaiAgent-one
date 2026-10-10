@@ -58,7 +58,7 @@ mysql -u root -p < backend/src/main/resources/schema.sql
 - `WorkflowEngine.java`: Main orchestration engine that executes workflows end-to-end
 - `EngineSelector.java`: Routes to DAG or LangGraph engine based on `engineType` field
 - `dag/DAGParser.java`: Parses workflow config into DAG, performs topological sorting using Kahn's algorithm, and detects cycles using DFS
-- `langgraph/`: LangGraph4j-based state graph engine. Same observable behaviour as the DAG engine (condition routing, skipped branches, failure semantics, snapshots) — enforced by `EngineContractTest` — but nodes run serially along the topological order (LangGraph4j 1.8 cannot fan out)
+- `langgraph/`: LangGraph4j-based state graph engine (core **1.8.0-beta3**). Same observable behaviour as the DAG engine (condition routing, skipped branches, failure semantics, snapshots) — enforced by `EngineContractTest`. The graph is built per dependency layer: `fan → nodes (LangGraph native parallel branches) → join`, with a failure-aware conditional edge between layers; condition-branch skipping is decided by the nodes themselves because native parallel branches forbid conditional edges, multi-node branches and branches that converge on different nodes (verified by probing). Node actions must hand work to the node pool and return an unfinished future, otherwise LangGraph invokes them one after another. Do not re-add `langgraph4j-core-jdk8:1.1.5`: it shadowed `StateGraph` and silently pinned the project to a version without parallel branches (`LangGraphDependencyTest` guards this)
 - `NodeRunner.java` / `ExecutionRecorder.java` / `support/ExecutionSupport.java`: node execution, persistence (snapshots, status CAS) and shared semantics used by both engines
 - `ExecutionDispatcher.java`: bounded execution pool; overload is rejected fast (HTTP code 429) instead of queueing without limit
 - `StaleExecutionReaper.java`: marks RUNNING executions with no heartbeat as FAILED so they can be resumed
@@ -129,7 +129,7 @@ Key features:
    - `EngineSelector` routes to appropriate engine (DAG or LangGraph)
    - For DAG: `DAGParser` validates (cycle detection) and sorts nodes topologically
    - For LangGraph: `GraphBuilder` constructs StateGraph with conditional routing
-   - DAG engine groups nodes into dependency layers and runs the independent nodes of a layer concurrently on a bounded pool (`paiagent.engine.parallel-enabled`); each node receives the outputs of its upstream nodes. The LangGraph engine runs nodes serially in topological order
+   - DAG engine groups nodes into dependency layers and runs the independent nodes of a layer concurrently on a bounded pool (`paiagent.engine.parallel-enabled`); each node receives the outputs of its upstream nodes. The LangGraph engine does the same through native parallel branches per layer
    - On failure the remaining layers are not started; `POST /executions/{id}/resume` re-runs only the failed node(s) and reuses successful snapshots. Resume is guarded by a status CAS (a concurrent resume gets `Result.code = 409`)
    - Each node result is recorded in `ExecutionRecord.node_results`
 5. Frontend displays execution results in `DebugDrawer` with logs and output data
@@ -142,6 +142,8 @@ Key features:
 - **API Docs**: Swagger UI at http://localhost:8084/swagger-ui.html
 
 ## Development Notes
+
+- TTS: `qwen3-tts-flash` uses the HTTP `MultiModalConversation` API with enum voices (Cherry…); the `qwen-audio-3.x-tts-flash` family uses a different API — WebSocket `ttsv2.SpeechSynthesizer` with string voice ids (`longanhuan_v3.1`, `Emily_v3.1`…, case-sensitive). The node picks the path by model name (`QwenAudioTtsSupport`). Beijing-region address per the Bailian docs: `wss://<WorkspaceId>.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference`. The audio path has not been exercised against the real service in this repo (no API key)
 
 - Backend API requires JWT token in `Authorization` header (Bearer scheme)
 - Frontend stores token in Zustand store and localStorage
