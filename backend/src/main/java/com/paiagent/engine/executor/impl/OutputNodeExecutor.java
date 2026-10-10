@@ -63,12 +63,14 @@ public class OutputNodeExecutor implements NodeExecutor {
                         String refParamName = parts[parts.length - 1]; // 参数名，例如 "response"
                         
                         Object refValue = null;
+                        boolean haveNodeOutputs = false;
                         
-                        // 优先从 input 的上层 nodeOutputs 中查找（LangGraph 场景）
+                        // 优先从 input 的上层 nodeOutputs 中按"节点 id + 参数名"精确查找
                         if (input.containsKey("__nodeOutputs__")) {
                             @SuppressWarnings("unchecked")
                             Map<String, Map<String, Object>> nodeOutputs = 
                                 (Map<String, Map<String, Object>>) input.get("__nodeOutputs__");
+                            haveNodeOutputs = nodeOutputs != null;
                             
                             if (nodeOutputs != null && nodeOutputs.containsKey(refNodeId)) {
                                 Map<String, Object> nodeOutput = nodeOutputs.get(refNodeId);
@@ -77,8 +79,10 @@ public class OutputNodeExecutor implements NodeExecutor {
                             }
                         }
                         
-                        // 如果找不到，尝试从 input 中获取值（DAG 引擎场景）
-                        if (refValue == null) {
+                        // 只有拿不到各节点输出时才按参数名从合并后的 input 里找。
+                        // 如果引用的节点没有输出（比如被条件分支跳过），就应当是"没有值"：
+                        // 这时再退回去按参数名找，会拿到上游合并数据里同名的 output（别的节点的结果），把错误的内容填进模板
+                        if (refValue == null && !haveNodeOutputs) {
                             refValue = input.get(refParamName);
                         }
                         

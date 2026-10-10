@@ -234,12 +234,12 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
         )}
         {key === 'image' && (
           <Form.Item name="imageModel" label="默认图片模型" rules={[{ required: true, message: '请输入图片模型' }]}>
-            <Input placeholder="例如: step-image-edit-2, step-1x-medium, seedream 相关图片生成模型" />
+            <Input placeholder="例如: wan2.2-t2i-flash（通义万相）, step-image-edit-2, step-1x-medium, seedream 相关图片生成模型" />
           </Form.Item>
         )}
         {key === 'video' && (
           <Form.Item name="videoModel" label="默认视频模型" rules={[{ required: true, message: '请输入视频模型' }]}>
-            <Input placeholder="例如: seedance 相关视频生成模型" />
+            <Input placeholder="例如: wan2.2-t2v-plus（通义万相）, seedance 相关视频生成模型" />
           </Form.Item>
         )}
       </div>

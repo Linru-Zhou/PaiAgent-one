@@ -28,6 +28,13 @@ public class AgentPlanConfigResolver {
         LLMGlobalConfig nodeGlobalConfig = nodeConfigId != null ? llmGlobalConfigService.getById(nodeConfigId) : null;
         Long explicitAgentPlanConfigId = parseLong(data.get("agentPlanConfigId"));
         LLMGlobalConfig globalConfig = resolveAgentPlanConfig(explicitAgentPlanConfigId, nodeGlobalConfig);
+        if ("video".equals(capability)) {
+            // 视频节点绑定的是通义配置（或节点自己选了通义）时，用通义，而不是被回退成火山的默认配置
+            LLMGlobalConfig qwenConfig = qwenVideoConfig(data, nodeGlobalConfig);
+            if (qwenConfig != null) {
+                globalConfig = qwenConfig;
+            }
+        }
         Long configId = globalConfig != null ? globalConfig.getId() : null;
 
         String nodeModel = trim(data.get("model"));
@@ -130,6 +137,16 @@ public class AgentPlanConfigResolver {
             return defaultAgentPlan;
         }
         return llmGlobalConfigService.getDefaultConfig("step");
+    }
+
+    private LLMGlobalConfig qwenVideoConfig(Map<String, Object> data, LLMGlobalConfig nodeGlobalConfig) {
+        if (nodeGlobalConfig != null) {
+            return "qwen".equals(canonicalizeProvider(nodeGlobalConfig.getProvider())) ? nodeGlobalConfig : null;
+        }
+        if ("qwen".equals(canonicalizeProvider(trim(data.get("provider"))))) {
+            return llmGlobalConfigService.getDefaultConfig("qwen");
+        }
+        return null;
     }
 
     private LLMGlobalConfig resolveAgentPlanConfig(Long explicitAgentPlanConfigId, LLMGlobalConfig nodeGlobalConfig) {

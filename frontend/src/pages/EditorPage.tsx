@@ -1254,18 +1254,30 @@ const EditorPage = () => {
   const availableAgentPlanConfigs = llmGlobalConfigs.filter(
     (config) => normalizeProviderKey(config.provider) === 'volcengine_agent_plan'
   );
-  const imageGenerationProviderOptions = providerOptions.filter(option => ['volcengine_agent_plan', 'step'].includes(option.value));
+  // 生图 / 生视频支持的供应商：火山方舟、阶跃星辰（仅生图）、通义千问（通义万相，与配音共用同一个百炼密钥）
+  const imageGenerationProviderOptions = providerOptions.filter(option => ['volcengine_agent_plan', 'step', 'qwen'].includes(option.value));
+  const videoGenerationProviderOptions = providerOptions.filter(option => ['volcengine_agent_plan', 'qwen'].includes(option.value));
   const availableImageGenerateConfigs = llmGlobalConfigs.filter((config) => {
     const provider = normalizeProviderKey(config.provider);
-    if (!['volcengine_agent_plan', 'step'].includes(provider)) {
+    if (!['volcengine_agent_plan', 'step', 'qwen'].includes(provider)) {
       return false;
     }
     return provider === 'volcengine_agent_plan' || !!config.imageModel;
   });
+  const availableVideoGenerateConfigs = llmGlobalConfigs.filter((config) => {
+    const provider = normalizeProviderKey(config.provider);
+    return provider === 'volcengine_agent_plan' || (provider === 'qwen' && !!config.videoModel);
+  });
   const availableToolConfigs = selectedNodeType === 'image_generate'
     ? availableImageGenerateConfigs
-    : availableAgentPlanConfigs;
+    : selectedNodeType === 'video_generate'
+      ? availableVideoGenerateConfigs
+      : availableAgentPlanConfigs;
   const selectedToolProvider = normalizeProviderKey(String(selectedNode?.data?.provider || '')) || 'volcengine_agent_plan';
+  // 生图 / 生视频节点自己选供应商；其余 Agent Plan 工具节点（联网搜索等）固定走火山
+  const mediaNodeProvider = (nodeType: string) => (nodeType === 'image_generate' || nodeType === 'video_generate')
+    ? selectedToolProvider
+    : 'volcengine_agent_plan';
   const selectedToolConfig = selectedNode?.data?.configId
     ? llmGlobalConfigs.find(config => config.id === selectedNode.data?.configId)
     : undefined;
@@ -2379,7 +2391,7 @@ const EditorPage = () => {
                     <Form.Item label={selectedNodeType === 'image_generate' ? '图片生成全局配置' : 'Agent Plan 全局配置'}>
                       <Select
                         value={(selectedNode.data?.configId as number) || undefined}
-                        placeholder={selectedNodeType === 'image_generate' ? '选择火山方舟或阶跃星辰图片配置' : '选择火山方舟 Agent Plan 配置'}
+                        placeholder={selectedNodeType === 'image_generate' ? '选择火山方舟 / 阶跃星辰 / 通义千问图片配置' : selectedNodeType === 'video_generate' ? '选择火山方舟 / 通义千问视频配置' : '选择火山方舟 Agent Plan 配置'}
                         allowClear
                         onChange={(value) => {
 	                          if (value) {
@@ -2392,14 +2404,14 @@ const EditorPage = () => {
 	                              apiUrl: config?.apiUrl || '',
 	                              apiKey: '',
 	                              model: '',
-	                              size: provider === 'step' ? getDefaultStepImageSize(imageModel) : ((selectedNode.data?.size as string) || '2K'),
+	                              size: provider === 'step' ? getDefaultStepImageSize(imageModel) : provider === 'qwen' ? '1024x1024' : ((selectedNode.data?.size as string) || '2K'),
                                 steps: provider === 'step' && imageModel === 'step-image-edit-2' ? 8 : selectedNode.data?.steps,
                                 cfgScale: provider === 'step' && imageModel === 'step-image-edit-2' ? 1 : selectedNode.data?.cfgScale,
                                 textMode: provider === 'step' && imageModel === 'step-image-edit-2' ? true : selectedNode.data?.textMode
 	                            });
                           } else {
                             updateSelectedNodeData({
-                              provider: selectedNodeType === 'image_generate' ? selectedToolProvider : 'volcengine_agent_plan',
+                              provider: mediaNodeProvider(selectedNodeType),
                               configId: undefined,
                               apiUrl: '',
                               apiKey: '',
@@ -2418,28 +2430,30 @@ const EditorPage = () => {
 
                     {!selectedNode.data?.configId && (
                       <>
-                        {selectedNodeType === 'image_generate' && (
+                        {(selectedNodeType === 'image_generate' || selectedNodeType === 'video_generate') && (
                           <Form.Item label="供应商">
                             <Select
                               value={selectedToolProvider}
-                              options={imageGenerationProviderOptions}
+                              options={selectedNodeType === 'image_generate' ? imageGenerationProviderOptions : videoGenerationProviderOptions}
 	                              onChange={(value) => updateSelectedNodeData({
 	                                provider: value,
-	                                apiUrl: value === 'step' ? 'https://api.stepfun.com/v1' : '',
+	                                apiUrl: value === 'step' ? 'https://api.stepfun.com/v1' : value === 'qwen' ? 'https://dashscope.aliyuncs.com/api/v1' : '',
 	                                model: '',
-	                                size: value === 'step' ? '1280x800' : '2K'
+	                                size: value === 'step' ? '1280x800' : value === 'qwen' ? '1024x1024' : '2K'
 	                              })}
                             />
                           </Form.Item>
                         )}
                         <Form.Item label="API 地址">
                           <Input
-                            placeholder={selectedNodeType === 'image_generate' && selectedToolProvider === 'step'
+                            placeholder={selectedToolProvider === 'qwen' && (selectedNodeType === 'image_generate' || selectedNodeType === 'video_generate')
+                              ? 'https://dashscope.aliyuncs.com/api/v1'
+                              : selectedNodeType === 'image_generate' && selectedToolProvider === 'step'
                               ? (isStepImageEditModel ? 'https://api.stepfun.com/step_plan/v1' : 'https://api.stepfun.com/v1')
                               : 'https://ark.cn-beijing.volces.com/api/plan/v3'}
                             value={(selectedNode.data?.apiUrl as string) || ''}
                             onChange={(e) => updateSelectedNodeData({
-                              provider: selectedNodeType === 'image_generate' ? selectedToolProvider : 'volcengine_agent_plan',
+                              provider: mediaNodeProvider(selectedNodeType),
                               apiUrl: e.target.value
                             })}
                           />
@@ -2452,7 +2466,11 @@ const EditorPage = () => {
 	                        </Form.Item>
                         <Form.Item label="模型覆盖">
                           <Input
-                            placeholder={selectedNodeType === 'image_generate' && selectedToolProvider === 'step'
+                            placeholder={selectedToolProvider === 'qwen' && selectedNodeType === 'image_generate'
+                              ? '可选，例如 wan2.2-t2i-flash、wan2.2-t2i-plus'
+                              : selectedToolProvider === 'qwen' && selectedNodeType === 'video_generate'
+                              ? '可选，例如 wan2.2-t2v-plus、wan2.5-t2v-preview'
+                              : selectedNodeType === 'image_generate' && selectedToolProvider === 'step'
                               ? '可选，例如 step-image-edit-2 或 step-1x-medium'
                               : '可选。为空时使用全局配置里的对应模型'}
                             value={(selectedNode.data?.model as string) || ''}

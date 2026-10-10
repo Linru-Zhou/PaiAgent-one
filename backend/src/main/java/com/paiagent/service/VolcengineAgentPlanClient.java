@@ -22,7 +22,7 @@ import java.util.Map;
  */
 @Slf4j
 @Service
-public class VolcengineAgentPlanClient {
+public class VolcengineAgentPlanClient implements VideoTaskClient {
 
     public List<Double> createEmbedding(ResolvedAgentPlanConfig config, String input) throws IOException {
         JSONObject request = new JSONObject();
@@ -86,6 +86,7 @@ public class VolcengineAgentPlanClient {
         return output;
     }
 
+    @Override
     public String createVideoTask(ResolvedAgentPlanConfig config, String prompt, String referenceImageUrl,
                                   int duration, String resolution, String ratio, String cameraMotion) throws IOException {
         JSONObject request = new JSONObject();
@@ -121,6 +122,7 @@ public class VolcengineAgentPlanClient {
         return firstText(response.getString("id"), response.getString("task_id"), response.getString("taskId"));
     }
 
+    @Override
     public Map<String, Object> getVideoTask(ResolvedAgentPlanConfig config, String taskId) throws IOException {
         JSONObject response = getJson(config, "/contents/generations/tasks/" + taskId);
         Map<String, Object> output = new LinkedHashMap<>();
@@ -136,6 +138,7 @@ public class VolcengineAgentPlanClient {
      * 官方文档只写了成功返回 200，没有写哪些状态可以取消，所以正在运行的任务很可能被服务商拒绝，
      * 拒绝时抛出 IOException（带 HTTP 状态和响应体），由调用方决定怎么处理。
      */
+    @Override
     public void cancelVideoTask(ResolvedAgentPlanConfig config, String taskId) throws IOException {
         HttpURLConnection conn = openConnection(config, "/contents/generations/tasks/" + taskId, "DELETE", config.apiKey());
         readResponse(conn);

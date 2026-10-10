@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Collapse, Tag, message } from 'antd';
 import { getNodeTypes, NodeDefinition } from '../api/workflow';
+import { getNodeVisual } from '../utils/nodeVisuals';
 
 interface NodePanelProps {
   onDragStart: (event: React.DragEvent, nodeType: string, displayName: string) => void;
@@ -41,29 +42,25 @@ const NodePanel = ({ onDragStart }: NodePanelProps) => {
   const toolNodes = nodeTypes.filter((node) => node.category === 'TOOL');
   const controlNodes = nodeTypes.filter((node) => node.category === 'CONTROL');
 
-  const getNodeTone = (node: NodeDefinition) => {
-    if (node.nodeType === 'input') return 'node-library-green';
-    if (node.nodeType === 'output') return 'node-library-purple';
-    if (node.category === 'TOOL') return 'node-library-amber';
-    if (node.category === 'CONTROL') return 'node-library-purple';
-    return 'node-library-blue';
-  };
-
-  const renderNodeItem = (node: NodeDefinition) => (
+  const renderNodeItem = (node: NodeDefinition) => {
+    // 与画布上的节点卡片共用同一份外观（徽标文字 + 颜色），拖出来的节点一眼就能对上
+    const visual = getNodeVisual(node.nodeType);
+    return (
     <div
       key={node.nodeType}
       draggable
       onDragStart={(e) => onDragStart(e, node.nodeType, node.displayName)}
       className="node-library-item"
     >
-      <div className={`node-library-icon ${getNodeTone(node)}`}>{node.icon}</div>
+      <div className={`node-library-icon ${visual.tone}`}>{visual.badge}</div>
       <div className="min-w-0 flex-1">
         <div className="node-library-title">{node.displayName}</div>
         <div className="node-library-meta">{node.nodeType}</div>
       </div>
       <span className="node-library-drag" aria-hidden="true">⋮⋮</span>
     </div>
-  );
+    );
+  };
 
   const items = [
     {

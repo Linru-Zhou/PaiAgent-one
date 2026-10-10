@@ -2,6 +2,7 @@ package com.paiagent.engine.executor.impl;
 
 import com.paiagent.engine.model.WorkflowNode;
 import com.paiagent.service.AgentPlanConfigResolver;
+import com.paiagent.service.DashScopeMediaClient;
 import com.paiagent.service.MinioService;
 import com.paiagent.service.ResolvedAgentPlanConfig;
 import com.paiagent.service.StepFunImageClient;
@@ -23,6 +24,10 @@ public class ImageGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
     private final VolcengineAgentPlanClient agentPlanClient;
     private final StepFunImageClient stepFunImageClient;
     private final MinioService minioService;
+
+    /** 通义万相（百炼）的客户端；测试里手动构造执行器时没有。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DashScopeMediaClient dashScopeClient;
 
     public ImageGenerateNodeExecutor(AgentPlanConfigResolver configResolver,
                                      VolcengineAgentPlanClient agentPlanClient,
@@ -106,6 +111,12 @@ public class ImageGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
                     seed,
                     textMode
             );
+            case "qwen" -> {
+                if (dashScopeClient == null) {
+                    throw new IllegalStateException("通义生图客户端未初始化");
+                }
+                yield dashScopeClient.generateImage(config, prompt, size, count, negativePrompt);
+            }
             default -> throw new IllegalArgumentException("图片生成暂不支持提供商: " + config.provider());
         };
     }

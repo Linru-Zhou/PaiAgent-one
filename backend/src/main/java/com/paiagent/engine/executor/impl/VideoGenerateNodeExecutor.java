@@ -8,6 +8,8 @@ import com.paiagent.service.AgentPlanConfigResolver;
 import com.paiagent.service.MinioService;
 import com.paiagent.service.ResolvedAgentPlanConfig;
 import com.paiagent.service.VideoTaskCheckpointService;
+import com.paiagent.service.DashScopeMediaClient;
+import com.paiagent.service.VideoTaskClient;
 import com.paiagent.service.VolcengineAgentPlanClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -38,6 +40,10 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
     private final MinioService minioService;
     private final VideoTaskCheckpointService checkpointService;
 
+    /** 通义（百炼）的视频客户端；测试里手动构造执行器时没有。 */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private DashScopeMediaClient dashScopeClient;
+
     private long pollIntervalMs = POLL_INTERVAL_MS;
 
     public VideoGenerateNodeExecutor(AgentPlanConfigResolver configResolver,
@@ -48,6 +54,17 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
         this.agentPlanClient = agentPlanClient;
         this.minioService = minioService;
         this.checkpointService = checkpointService;
+    }
+
+    /** 按供应商选视频客户端：任务级恢复（检查点、继续等待 / 重新生成）对所有供应商一视同仁。 */
+    private VideoTaskClient clientFor(ResolvedAgentPlanConfig config) {
+        if ("qwen".equals(config.provider())) {
+            if (dashScopeClient == null) {
+                throw new IllegalStateException("通义视频客户端未初始化");
+            }
+            return dashScopeClient;
+        }
+        return agentPlanClient;
     }
 
     /** 仅供单测缩短轮询间隔，生产代码保持默认 5s。 */
@@ -91,7 +108,7 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
                 node, input, progressCallback, config, checkpointKey, fingerprint, previousTask);
         if (taskId == null) {
             emit(node, progressCallback, "视频任务提交中", Map.of("model", config.model()));
-            taskId = agentPlanClient.createVideoTask(
+            taskId = clientFor(config).createVideoTask(
                     config, prompt, referenceImageUrl, duration, resolution, ratio, cameraMotion);
             if (!StringUtils.hasText(taskId)) {
                 throw new IllegalStateException("视频生成接口未返回 taskId");
@@ -105,7 +122,7 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
         for (int i = 0; i < MAX_POLLS; i++) {
             emit(node, progressCallback, "视频生成中", Map.of("taskId", taskId, "poll", i + 1));
             Thread.sleep(pollIntervalMs);
-            task = agentPlanClient.getVideoTask(config, taskId);
+            task = clientFor(config).getVideoTask(config, taskId);
             String status = String.valueOf(task.getOrDefault("status", ""));
             if (isSuccess(status)) {
                 succeeded = true;
@@ -195,7 +212,7 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
                                     Map<String, Object> previousTask) {
         previousTask.put("taskId", taskId);
         try {
-            agentPlanClient.cancelVideoTask(config, taskId);
+            clientFor(config).cancelVideoTask(config, taskId);
             previousTask.put("cancelled", true);
             // 已经确定停了：万一新任务提交失败，下次续跑不用再为这个任务反问
             markFailed(checkpointKey, taskId);
@@ -210,7 +227,7 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
 
     private String peekStatus(ResolvedAgentPlanConfig config, String taskId) {
         try {
-            return asText(agentPlanClient.getVideoTask(config, taskId).get("status"));
+            return asText(clientFor(config).getVideoTask(config, taskId).get("status"));
         } catch (Exception e) {
             log.warn("查询上次视频任务 {} 的状态失败: {}", taskId, e.getMessage());
             return null;

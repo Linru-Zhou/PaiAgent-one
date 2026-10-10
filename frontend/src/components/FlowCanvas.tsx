@@ -21,6 +21,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { useWorkflowStore } from '../store/workflowStore';
 import { renderCanvasToPng } from '../utils/exportCanvasImage';
+import { getNodeVisual } from '../utils/nodeVisuals';
 import { saveWorkflowImage } from '../api/workflow';
 import { WORKFLOW_EDGE_MARKER, WORKFLOW_EDGE_STYLE, WORKFLOW_EDGE_TYPE } from '../utils/workflowEdge';
 
@@ -63,24 +64,6 @@ const getDefaultNodeData = (type: string) => {
   }
 };
 
-const nodeMeta: Record<string, { icon: string; tone: string; caption: string }> = {
-  input: { icon: 'IN', tone: 'node-tone-green', caption: 'Start input' },
-  output: { icon: 'OUT', tone: 'node-tone-purple', caption: 'Final response' },
-  llm: { icon: 'AI', tone: 'node-tone-blue', caption: 'Model call' },
-  react_agent: { icon: 'AI', tone: 'node-tone-blue', caption: 'ReAct compatibility' },
-  openai: { icon: 'AI', tone: 'node-tone-blue', caption: 'OpenAI' },
-  deepseek: { icon: 'DS', tone: 'node-tone-blue', caption: 'DeepSeek' },
-  qwen: { icon: 'QW', tone: 'node-tone-blue', caption: 'Qwen' },
-  zhipu: { icon: 'ZP', tone: 'node-tone-blue', caption: 'ZhiPu' },
-  ai_ping: { icon: 'AP', tone: 'node-tone-blue', caption: 'AIPing' },
-  tts: { icon: 'TTS', tone: 'node-tone-amber', caption: 'Audio tool' },
-  condition: { icon: 'IF', tone: 'node-tone-orange', caption: 'Condition branch' },
-};
-
-const getNodeMeta = (type?: string) => (
-  nodeMeta[type || ''] || { icon: 'FN', tone: 'node-tone-slate', caption: 'Workflow node' }
-);
-
 const getToolLabels = (tools: string[]) => {
   const labels: string[] = [];
   if (tools.includes('web_search') || tools.includes('web_fetch')) {
@@ -102,7 +85,7 @@ const getKnowledgeBaseLabel = (data: WorkflowNodeData) => {
 const WorkflowNodeCard = ({ id, data, selected }: NodeProps<WorkflowCardNode>) => {
   const runStatus = useWorkflowStore((state) => state.runStatus[id]);
   const workflowType = data.type || '';
-  const meta = getNodeMeta(workflowType);
+  const meta = getNodeVisual(workflowType);
   const inputCount = Array.isArray(data.inputParams) ? data.inputParams.length : 0;
   const outputCount = Array.isArray(data.outputParams) ? data.outputParams.length : 0;
   const modelLabel = data.model || data.provider || data.skillName || meta.caption;
@@ -133,7 +116,7 @@ const WorkflowNodeCard = ({ id, data, selected }: NodeProps<WorkflowCardNode>) =
         />
       )}
       <div className="workflow-node-header">
-        <div className={`workflow-node-icon ${meta.tone}`}>{meta.icon}</div>
+        <div className={`workflow-node-icon ${meta.tone}`}>{meta.badge}</div>
         <div className="workflow-node-title-wrap">
           <div className="workflow-node-title">{data.label || workflowType || '未命名节点'}</div>
           <div className="workflow-node-subtitle">{modelLabel}</div>
@@ -386,7 +369,7 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
           pannable
           zoomable
           className="workflow-minimap"
-          nodeColor={(node) => getNodeMeta(String(node.data?.type || '')).tone.includes('green') ? '#22c55e' : '#64748b'}
+          nodeColor={(node) => getNodeVisual(String(node.data?.type || '')).tone.includes('green') ? '#22c55e' : '#64748b'}
         />
       </ReactFlow>
     </div>
