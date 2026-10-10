@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Alert, Button, Input, Form, message, Checkbox, Select, Modal, List, Popconfirm } from 'antd';
+import { Alert, AutoComplete, Button, Input, Form, message, Checkbox, Select, Modal, List, Popconfirm } from 'antd';
 import { SaveOutlined, FolderOpenOutlined, BugOutlined, LogoutOutlined, PlusOutlined, DeleteOutlined, DatabaseOutlined, ApiOutlined } from '@ant-design/icons';
 import { Edge, MarkerType, Node } from '@xyflow/react';
 import NodePanel from '../components/NodePanel';
@@ -1201,7 +1201,24 @@ const EditorPage = () => {
   const isStepTtsProvider = normalizedTtsProvider === 'step';
   const hasTtsProvider = ['qwen', 'step'].includes(normalizedTtsProvider);
   const getDefaultTtsModel = (provider: string) => provider === 'step' ? 'stepaudio-2.5-tts' : provider === 'qwen' ? 'qwen3-tts-flash' : '';
-  const getDefaultTtsVoice = (provider: string) => provider === 'step' ? 'cixingnansheng' : provider === 'qwen' ? 'Cherry' : '';
+  // qwen-audio-3.x-tts-flash 走 WebSocket 的另一套接口：音色是 xxx_v3.1 这类字符串 ID，不是 Cherry 这类枚举
+  const isQwenAudioModel = (model?: string) => /^qwen-audio/i.test((model || '').trim());
+  const getDefaultTtsVoice = (provider: string, model?: string) => {
+    if (provider === 'step') return 'cixingnansheng';
+    if (provider === 'qwen') {
+      if (isQwenAudioModel(model)) return (model || '').includes('3.0') ? 'longanhuan_v3.6' : 'longanhuan_v3.1';
+      return 'Cherry';
+    }
+    return '';
+  };
+  const qwenAudioVoiceOptions = [
+    { value: 'longanhuan_v3.1', label: 'longanhuan_v3.1（多语种女声，含中文方言）' },
+    { value: 'xunanchuan_v3.1', label: 'xunanchuan_v3.1（多语种男声）' },
+    { value: 'yuxiaoyun_v3.1', label: 'yuxiaoyun_v3.1（普通话女声）' },
+    { value: 'anmingyuan_v3.1', label: 'anmingyuan_v3.1（普通话男声）' },
+    { value: 'Emily_v3.1', label: 'Emily_v3.1（英式英语女声，仅英文）' },
+    { value: 'Brian_v3.1', label: 'Brian_v3.1（美式英语男声，仅英文）' },
+  ];
   const getTtsModelForProvider = (provider: string, ttsModel?: string | null, fallbackModel?: string | null) => {
     const normalizedProvider = normalizeProviderKey(provider);
     const explicitTtsModel = ttsModel?.trim() || '';
@@ -2095,7 +2112,9 @@ const EditorPage = () => {
                                   apiUrl: config.apiUrl,
                                   apiKey: '',
                                   model: getTtsModelForProvider(provider, config.ttsModel, config.model),
-                                  voice: providerChanged ? getDefaultTtsVoice(provider) : ttsConfig.voice
+                                  voice: (providerChanged || isQwenAudioModel(getTtsModelForProvider(provider, config.ttsModel, config.model)) !== isQwenAudioModel(ttsConfig.model))
+                                    ? getDefaultTtsVoice(provider, getTtsModelForProvider(provider, config.ttsModel, config.model))
+                                    : ttsConfig.voice
                                 });
                               }
                             } else {
@@ -2153,7 +2172,7 @@ const EditorPage = () => {
                           </Form.Item>
                           <Form.Item label="模型名称" required>
                             <Input
-                              placeholder={isStepTtsProvider ? 'stepaudio-2.5-tts' : 'qwen3-tts-flash'}
+                              placeholder={isStepTtsProvider ? 'stepaudio-2.5-tts' : 'qwen3-tts-flash 或 qwen-audio-3.1-tts-flash'}
                               value={ttsConfig.model}
                               onChange={(e) => setTtsConfig({ ...ttsConfig, model: e.target.value })}
                             />
@@ -2186,6 +2205,13 @@ const EditorPage = () => {
                                 placeholder="例如: cixingnansheng"
                                 value={ttsConfig.voice}
                                 onChange={(e) => setTtsConfig({ ...ttsConfig, voice: e.target.value })}
+                              />
+                            ) : isQwenAudioModel(ttsConfig.model) ? (
+                              <AutoComplete
+                                value={ttsConfig.voice}
+                                options={qwenAudioVoiceOptions}
+                                placeholder="例如: longanhuan_v3.1（音色 ID 区分大小写）"
+                                onChange={(value) => setTtsConfig({ ...ttsConfig, voice: value })}
                               />
                             ) : (
                               <Select

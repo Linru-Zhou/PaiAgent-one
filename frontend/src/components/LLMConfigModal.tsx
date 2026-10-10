@@ -1,17 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import {
-  Modal,
-  Form,
-  Input,
-  AutoComplete,
-  Checkbox,
-  Select,
-  Button,
-  Table,
-  Space,
-  message,
-  Popconfirm
-} from 'antd';
+import { Alert, Modal, Form, Input, AutoComplete, Checkbox, Select, Button, Table, Space, message, Popconfirm } from 'antd';
 import { SettingOutlined, PlusOutlined, EditOutlined, DeleteOutlined, CloseOutlined } from '@ant-design/icons';
 import { useLLMConfigStore } from '../store/llmConfigStore';
 import { LLMGlobalConfig, LLMConfigRequest } from '../api/llmConfig';
@@ -231,7 +219,7 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
         </div>
         {key === 'tts' && (
           <Form.Item name="ttsModel" label="默认 TTS 模型" rules={[{ required: true, message: '请输入 TTS 模型' }]}>
-            <Input placeholder="例如: qwen3-tts-flash, stepaudio-2.5-tts" />
+            <Input placeholder="例如: qwen3-tts-flash, qwen-audio-3.1-tts-flash, stepaudio-2.5-tts" />
           </Form.Item>
         )}
         {key === 'embedding' && (
@@ -428,6 +416,17 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
               rules={[{ required: true, message: '请输入 API 地址' }]}
             >
               <Input placeholder="例如: https://api.openai.com, https://api.stepfun.com/v1" />
+            </Form.Item>
+            <Form.Item noStyle shouldUpdate={(prev, next) => prev.provider !== next.provider || prev.ttsModel !== next.ttsModel}>
+              {({ getFieldValue }) => /^qwen-audio/i.test(String(getFieldValue('ttsModel') || '')) ? (
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                  message="qwen-audio-3.x 系列走 WebSocket 接口"
+                  description="API 地址填 wss://<业务空间ID>.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference（业务空间 ID 在百炼控制台查看）；也可以只填 https://dashscope.aliyuncs.com/api/v1，会自动转成对应的 wss 地址。音色是 longanhuan_v3.1 这类字符串 ID，在节点的音色里选择。"
+                />
+              ) : null}
             </Form.Item>
 
             <Form.Item

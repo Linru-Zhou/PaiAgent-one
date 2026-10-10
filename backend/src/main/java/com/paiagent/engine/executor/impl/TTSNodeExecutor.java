@@ -4,6 +4,8 @@ import com.alibaba.dashscope.aigc.multimodalconversation.AudioParameters;
 import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversation;
 import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversationParam;
 import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversationResult;
+import com.alibaba.dashscope.audio.ttsv2.SpeechSynthesisParam;
+import com.alibaba.dashscope.audio.ttsv2.SpeechSynthesizer;
 import com.alibaba.dashscope.utils.Constants;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
@@ -24,6 +26,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -218,6 +221,14 @@ public class TTSNodeExecutor implements NodeExecutor {
         int sampleRate = parseInt(data.get("sampleRate"), 24000);
 
         model = normalizeTtsModel(provider, model, explicitTtsModel);
+        if ("qwen".equals(provider) && QwenAudioTtsSupport.isQwenAudioModel(model)) {
+            // Qwen-Audio 系列的音色是 xxx_v3.1 这类字符串 ID；节点里残留的 Cherry 等 qwen3-tts 音色不能用
+            String resolvedVoice = QwenAudioTtsSupport.resolveVoice(model, voice);
+            if (!resolvedVoice.equals(voice)) {
+                log.warn("Qwen-Audio 模型 {} 不支持音色 [{}]，已改用 {}", model, voice, resolvedVoice);
+            }
+            voice = resolvedVoice;
+        }
 
         return new TtsRuntimeConfig(
                 provider,
@@ -255,7 +266,9 @@ public class TTSNodeExecutor implements NodeExecutor {
     private byte[] synthesizeChunk(TtsRuntimeConfig config, String chunk, int chunkIndex, int totalChunks) throws Exception {
         return switch (config.provider()) {
             case "step" -> callStepTts(config, chunk);
-            case "qwen" -> callQwenTts(config, chunk, chunkIndex, totalChunks);
+            case "qwen" -> QwenAudioTtsSupport.isQwenAudioModel(config.model())
+                    ? callQwenAudioTts(config, chunk, chunkIndex, totalChunks)
+                    : callQwenTts(config, chunk, chunkIndex, totalChunks);
             default -> throw new IllegalArgumentException("TTS 暂不支持的供应商: " + config.provider());
         };
     }
@@ -291,6 +304,53 @@ public class TTSNodeExecutor implements NodeExecutor {
 
         log.info("第 {}/{} 个片段音频URL: {}", chunkIndex, totalChunks, audioUrl);
         return downloadAudio(audioUrl);
+    }
+
+    /**
+     * Qwen-Audio 系列（qwen-audio-3.x-tts-flash）：WebSocket 的 ttsv2.SpeechSynthesizer，同步模式（回调传 null），
+     * 直接返回音频字节。DashScope SDK 的服务地址是个全局静态变量，沿用 qwen3-tts 路径的做法：加锁设置、用完还原。
+     */
+    private byte[] callQwenAudioTts(TtsRuntimeConfig config, String chunk, int chunkIndex, int totalChunks) throws Exception {
+        int sampleRate = QwenAudioTtsSupport.sampleRateOf(config.sampleRate());
+        SpeechSynthesisParam.SpeechSynthesisParamBuilder<?, ?> builder = SpeechSynthesisParam.builder()
+                .apiKey(config.apiKey())
+                .model(config.model())
+                .voice(config.voice())
+                .format(QwenAudioTtsSupport.wavFormat(sampleRate));
+        if (config.speed() >= 0.5 && config.speed() <= 2.0 && config.speed() != 1.0) {
+            builder.speechRate((float) config.speed());
+        }
+        SpeechSynthesisParam param = builder.build();
+
+        byte[] audio;
+        synchronized (DASHSCOPE_HTTP_URL_LOCK) {
+            String previousWsUrl = Constants.baseWebsocketApiUrl;
+            SpeechSynthesizer synthesizer = null;
+            try {
+                String wsUrl = QwenAudioTtsSupport.normalizeWebsocketUrl(config.apiUrl());
+                if (StringUtils.hasText(wsUrl)) {
+                    Constants.baseWebsocketApiUrl = wsUrl;
+                }
+                synthesizer = new SpeechSynthesizer(param, null);
+                ByteBuffer buffer = synthesizer.call(chunk);
+                if (buffer == null || !buffer.hasRemaining()) {
+                    throw new RuntimeException("Qwen-Audio TTS 返回的音频为空 (片段 " + chunkIndex + ")");
+                }
+                audio = new byte[buffer.remaining()];
+                buffer.get(audio);
+            } finally {
+                if (synthesizer != null) {
+                    try {
+                        synthesizer.getDuplexApi().close(1000, "bye");
+                    } catch (Exception e) {
+                        log.debug("关闭 TTS WebSocket 连接失败: {}", e.getMessage());
+                    }
+                }
+                Constants.baseWebsocketApiUrl = previousWsUrl;
+            }
+        }
+        log.info("第 {}/{} 个片段合成完成（Qwen-Audio），{} 字节", chunkIndex, totalChunks, audio.length);
+        return QwenAudioTtsSupport.ensureWav(audio, sampleRate);
     }
 
     private byte[] callStepTts(TtsRuntimeConfig config, String chunk) throws Exception {
@@ -661,11 +721,17 @@ public class TTSNodeExecutor implements NodeExecutor {
             int sampleRate
     ) {
         int maxInputLength() {
-            return "step".equals(provider) ? STEP_MAX_TTS_INPUT_LENGTH : QWEN_MAX_TTS_INPUT_LENGTH;
+            if ("step".equals(provider)) {
+                return STEP_MAX_TTS_INPUT_LENGTH;
+            }
+            return QwenAudioTtsSupport.isQwenAudioModel(model) ? QwenAudioTtsSupport.MAX_INPUT_LENGTH : QWEN_MAX_TTS_INPUT_LENGTH;
         }
 
         int maxInputBytes() {
-            return "step".equals(provider) ? Integer.MAX_VALUE : QWEN_MAX_TTS_INPUT_BYTES;
+            if ("step".equals(provider)) {
+                return Integer.MAX_VALUE;
+            }
+            return QwenAudioTtsSupport.isQwenAudioModel(model) ? QwenAudioTtsSupport.MAX_INPUT_BYTES : QWEN_MAX_TTS_INPUT_BYTES;
         }
     }
 }
