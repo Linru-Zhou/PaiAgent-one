@@ -41,3 +41,10 @@ Thumbs.db
 
 # 工作流产物（音频/图片/视频与每次执行结果），本地查看用，不入库
 outputs/
+
+# AI 编程工具的本地会话与自动生成内容（.qoder 下其余文件是上游提交的规则，仍然跟踪）
+.claude/
+.qoder/repowiki/
+
+# 个人面试准备材料，不公开
+docs/interview/
