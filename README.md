@@ -21,6 +21,29 @@
 
 ---
 
+## 🔀 项目来源与改动说明
+
+> **本仓库是 [沉默王二](https://github.com/itwanger) 开源项目 [PaiAgent](https://gitcode.com/javabetter/PaiAgent) 的二次开发版本，不是原创项目。**
+> 上游作者的提交完整保留在 git 历史中（`git log --author=沉默王二`），许可证沿用 MIT，见 [LICENSE](LICENSE)。
+
+**上游已有的部分**（本仓库没有重写）：ReactFlow 可视化编辑器与节点库、自研 DAG 引擎（Kahn 拓扑排序 + DFS 环检测）、LangGraph4j 状态图引擎的初版、LLM / TTS / 输入输出等节点、Skills 技能系统、SSE 实时调试面板、节点快照与失败续跑的基础实现，以及配套教程。
+
+**本仓库在此基础上新增的部分**（维护者 [@Linru-Zhou](https://github.com/Linru-Zhou)，逐条对应 git 提交，可用 `git log --author=周林如` 查看）：
+
+- **并发与一致性**：同层独立节点并发执行（有界线程池，过载快速拒绝）；执行状态流转与快照并发安全；记忆 / 知识库写入节点在续跑、重试下幂等
+- **LLM 调用治理**：读超时、有限重试、按供应商的并发上限；LLM 节点的 Token 用量与成本估算
+- **密钥安全**：API Key 落库加密（AES-256-GCM），接口只返回脱敏值
+- **LangGraph 引擎**：修复依赖冲突，按依赖层使用原生并行分支；用契约测试保证与 DAG 引擎行为一致
+- **前端**：基于 fetch 的 SSE 与断线恢复、画布状态单一数据源；执行时间线、续跑面板、双引擎对比；节点缩放、连线删除、条件节点配置界面、画布与节点库统一的节点外观
+- **视频任务级恢复**：续跑时复用已提交的视频任务，由用户选择继续等待或重新生成
+- **通义千问（百炼）接入**：配音（qwen-audio）、生图、生视频；产物与每次执行结果保存到可见的 `outputs/` 目录；流程图导出 PNG；封面标题由程序渲染（生图模型写字不可靠），并关闭厂商对提示词的改写
+- **Agent 长期记忆**：SQLite 持久化 + 混合检索
+- **测试**：当前后端 201 个、前端 26 个测试用例
+
+> 配套教程（下方"项目教程"）由上游作者撰写并发布在技术派，版权归原作者，本仓库不含教程正文，仅保留链接。
+
+---
+
 ## 📖 项目简介
 
 PaiAgent 是一个**企业级的 AI 工作流可视化编排平台**，让 AI 能力的组合和调度变得简单高效。通过直观的拖拽式界面，开发者和业务人员都能快速构建复杂的 AI 处理流程，无需编写代码即可实现多种大模型的协同工作。
@@ -49,11 +72,13 @@ PaiAgent 是一个**企业级的 AI 工作流可视化编排平台**，让 AI �
 
 ![](https://cdn.tobebetterjavaer.com/paicoding/README-e53485e802924c61b63483b19360299b.png)
 
-我已经放到技术派上了，[点击这里](https://paicoding.com/column/14/1)查看详细教程（限时免费）。
+> 以下教程为上游作者沉默王二所写，与本仓库的二次开发内容无关。
+
+上游作者已把教程放到技术派上，[点击这里](https://paicoding.com/column/14/1)查看详细教程（限时免费）。
 
 ![](https://cdn.tobebetterjavaer.com/paicoding/README-e09eccf1dfde4316b17fecc069abd082.png)
 
-第一期我更新了五篇教程，有想学习的同学可以跟着这个项目冲。
+第一期有五篇教程，想学习的同学可以跟着这个项目冲。
 
 - [搭建PaiAgent脚手架](https://paicoding.com/column/14/1)
 - [节点配置](https://paicoding.com/column/14/2)
@@ -61,7 +86,7 @@ PaiAgent 是一个**企业级的 AI 工作流可视化编排平台**，让 AI �
 - [超拟人音频节点](https://paicoding.com/column/14/4)
 - [工作流实时推送](https://paicoding.com/column/14/5)
 
-第二期我更新了三篇教程，分别是写简历、面试题和LangGraph4J。
+第二期有三篇教程，分别是写简历、面试题和LangGraph4J。
 
 - [写简历](https://paicoding.com/column/14/6)
 - [面试题](https://paicoding.com/column/14/7)
@@ -390,7 +415,7 @@ PaiAgent-one/
 #### 步骤 1：克隆项目
 
 ```bash
-git clone https://github.com/yourusername/PaiAgent-one.git
+git clone https://github.com/Linru-Zhou/PaiAgent-one.git
 cd PaiAgent-one
 ```
 
@@ -792,22 +817,25 @@ const customNode = {
 
 ### 获取帮助
 
-- 📬 **GitHub Issues**：[问题反馈和功能建议](https://github.com/yourusername/PaiAgent-one/issues)
-- 💭 **GitHub Discussions**：[技术讨论和经验分享](https://github.com/yourusername/PaiAgent-one/discussions)
+- 📬 **GitHub Issues**：[问题反馈和功能建议](https://github.com/Linru-Zhou/PaiAgent-one/issues)
+- 💭 **GitHub Discussions**：[技术讨论和经验分享](https://github.com/Linru-Zhou/PaiAgent-one/discussions)
 - 📖 **官方文档**：查看 [USER_GUIDE.md](./USER_GUIDE.md) 获取完整使用指南
 
 ### 联系方式
 
-- **项目维护者**：[@itwanger](https://github.com/itwanger)
+- **本仓库维护者**：[@Linru-Zhou](https://github.com/Linru-Zhou)
+- **上游原作者**：[@itwanger](https://github.com/itwanger)（[原项目](https://gitcode.com/javabetter/PaiAgent)）
 - **邮箱**：项目相关问题请通过 GitHub Issues 提交
 
 ## 📄 许可证
 
-本项目采用 [MIT License](LICENSE) 开源协议。
+本项目采用 [MIT License](LICENSE) 开源协议，[LICENSE](LICENSE) 中同时署有上游作者与本仓库修改者。
+
+说明：上游 README 声明了 MIT 并链接到 LICENSE 文件，但本仓库所继承的上游代码里没有这个文件。本仓库按其声明沿用 MIT；上游作者如有不同说明，以作者为准。
 
 ## 🌟 致谢
 
-感谢所有为本项目做出贡献的开发者！
+感谢 [沉默王二](https://github.com/itwanger) 开源 PaiAgent，本仓库在其基础上开发。也感谢所有为本项目做出贡献的开发者！
 
 ---
 
