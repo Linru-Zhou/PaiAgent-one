@@ -79,6 +79,8 @@ public class McpToolConfigService extends ServiceImpl<McpToolConfigMapper, McpTo
     @Transactional
     public Map<String, Object> updateConfig(Long id, McpToolConfigRequest request) {
         McpToolConfig config = requireConfig(id);
+        // 命令、参数或环境变量可能变了：先关掉按旧配置启动的常驻进程，下次调用按新配置重新拉起
+        searchInfinityMcpClient.evict(config);
         applyRequest(config, request);
         this.updateById(config);
         return toSafeMap(config);
@@ -86,6 +88,7 @@ public class McpToolConfigService extends ServiceImpl<McpToolConfigMapper, McpTo
 
     @Transactional
     public void deleteConfig(Long id) {
+        searchInfinityMcpClient.evict(this.getById(id));
         this.removeById(id);
     }
 
@@ -121,6 +124,11 @@ public class McpToolConfigService extends ServiceImpl<McpToolConfigMapper, McpTo
         }
         String searchQuery = StringUtils.hasText(query) ? query.trim() : "今天的科技新闻";
         return searchInfinityMcpClient.webSearch(config, searchQuery, 3, null, null, "web");
+    }
+
+    /** 向该 MCP 服务发 tools/list，返回它声明的工具（名称、描述、参数 schema）。 */
+    public List<Map<String, Object>> listTools(Long id) throws Exception {
+        return searchInfinityMcpClient.listTools(requireConfig(id));
     }
 
     public List<String> parseArgs(McpToolConfig config) {

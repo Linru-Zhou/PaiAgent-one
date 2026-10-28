@@ -84,4 +84,16 @@ public class McpToolConfigController {
             return Result.error("MCP 工具调用失败: " + e.getMessage());
         }
     }
+
+    @Operation(summary = "列出 MCP 服务提供的工具（tools/list）")
+    @GetMapping("/{id}/tools")
+    public Result<List<Map<String, Object>>> listTools(@PathVariable Long id) {
+        try {
+            return Result.success(mcpToolConfigService.listTools(id));
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        } catch (Exception e) {
+            return Result.error("读取 MCP 工具列表失败: " + e.getMessage());
+        }
+    }
 }

@@ -4,18 +4,14 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.paiagent.entity.McpToolConfig;
+import com.paiagent.service.mcp.McpServerSpec;
+import com.paiagent.service.mcp.McpSessionPool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -23,23 +19,49 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Minimal stdio MCP client for Agent Plan Harness web search.
+ * Agent Plan Harness 联网搜索的 MCP 调用。进程和会话由 {@link McpSessionPool} 管理并复用，
+ * 这里只负责拼参数和整理返回结果。
  */
 @Slf4j
 @Service
 public class SearchInfinityMcpClient {
 
     private static final String TOOL_NAME = "web_search";
-    private static final Duration INITIALIZE_TIMEOUT = Duration.ofSeconds(90);
-    private static final Duration CALL_TIMEOUT = Duration.ofSeconds(120);
+    private static final Duration CALL_TIMEOUT = McpSessionPool.DEFAULT_CALL_TIMEOUT;
+
+    private final McpSessionPool sessionPool;
+
+    public SearchInfinityMcpClient(McpSessionPool sessionPool) {
+        this.sessionPool = sessionPool;
+    }
+
+    /** 配置被改动或删除后，关掉旧配置对应的进程。 */
+    public void evict(McpToolConfig mcpToolConfig) {
+        if (mcpToolConfig != null) {
+            sessionPool.evict(specOf(mcpToolConfig));
+        }
+    }
+
+    /** 该配置对应的 MCP 服务提供的工具（tools/list）。 */
+    public List<Map<String, Object>> listTools(McpToolConfig mcpToolConfig) throws IOException {
+        try {
+            return sessionPool.listTools(specOf(mcpToolConfig)).stream()
+                    .<Map<String, Object>>map(tool -> new LinkedHashMap<>(tool))
+                    .toList();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("读取 MCP 工具列表被中断", e);
+        } catch (TimeoutException e) {
+            throw new IOException("读取 MCP 工具列表超时: " + e.getMessage(), e);
+        }
+    }
+
+    private McpServerSpec specOf(McpToolConfig config) {
+        return new McpServerSpec(resolveCommand(config.getCommand()), parseArgs(config.getArgs()), parseEnv(config.getEnv()));
+    }
 
     public Map<String, Object> webSearch(McpToolConfig mcpToolConfig, String query, int count,
                                          String timeRange, Integer authLevel,
@@ -48,9 +70,7 @@ public class SearchInfinityMcpClient {
             throw new IllegalArgumentException("联网搜索缺少 MCP 工具配置");
         }
         return doWebSearch(
-                mcpToolConfig.getCommand(),
-                parseArgs(mcpToolConfig.getArgs()),
-                parseEnv(mcpToolConfig.getEnv()),
+                specOf(mcpToolConfig),
                 query,
                 count,
                 timeRange,
@@ -59,15 +79,13 @@ public class SearchInfinityMcpClient {
         );
     }
 
-    private Map<String, Object> doWebSearch(String command, List<String> args, Map<String, String> env,
-                                            String query, int count, String timeRange,
+    private Map<String, Object> doWebSearch(McpServerSpec spec, String query, int count, String timeRange,
                                             Integer authLevel, String searchType) throws IOException {
         if (!StringUtils.hasText(query)) {
             throw new IllegalArgumentException("联网搜索缺少 query");
         }
 
-        try (McpSession session = McpSession.start(resolveCommand(command), args, env)) {
-            session.initialize();
+        try {
             JSONObject arguments = new JSONObject();
             arguments.put("Query", query);
             arguments.put("Count", Math.max(1, Math.min(count, "image".equalsIgnoreCase(searchType) ? 5 : 50)));
@@ -81,7 +99,7 @@ public class SearchInfinityMcpClient {
 
             log.info("Harness 联网搜索 MCP 调用开始: tool={}, searchType={}, count={}, query={}",
                     TOOL_NAME, arguments.getString("SearchType"), arguments.getInteger("Count"), abbreviate(query, 120));
-            JSONObject result = session.callTool(TOOL_NAME, arguments);
+            JSONObject result = sessionPool.callTool(spec, TOOL_NAME, arguments, CALL_TIMEOUT);
             Map<String, Object> output = normalizeToolResult(result);
             log.info("Harness 联网搜索 MCP 调用完成: contentItems={}, isError={}",
                     ((List<?>) output.getOrDefault("content", List.of())).size(), output.get("isError"));
@@ -510,168 +528,5 @@ public class SearchInfinityMcpClient {
             return value;
         }
         return value.substring(0, maxLength) + "...";
-    }
-
-    private static final class McpSession implements Closeable {
-        private final Process process;
-        private final BufferedReader input;
-        private final BufferedWriter output;
-        private final ExecutorService readerExecutor = Executors.newSingleThreadExecutor();
-        private final AtomicLong requestIds = new AtomicLong(1);
-        private final List<String> stderrLines = new ArrayList<>();
-
-        private McpSession(Process process) {
-            this.process = process;
-            this.input = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
-            this.output = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
-            Thread stderrThread = new Thread(this::collectStderr, "search-infinity-mcp-stderr");
-            stderrThread.setDaemon(true);
-            stderrThread.start();
-        }
-
-        static McpSession start(String command, List<String> args, Map<String, String> env) throws IOException {
-            List<String> commandLine = new ArrayList<>();
-            commandLine.add(command);
-            commandLine.addAll(args == null ? List.of() : args);
-            ProcessBuilder builder = new ProcessBuilder(commandLine);
-            if (env != null) {
-                env.forEach((key, value) -> {
-                    if (StringUtils.hasText(key)) {
-                        builder.environment().put(key, value == null ? "" : value);
-                    }
-                });
-            }
-            return new McpSession(builder.start());
-        }
-
-        void initialize() throws IOException, InterruptedException, TimeoutException {
-            JSONObject params = new JSONObject();
-            params.put("protocolVersion", "2024-11-05");
-            params.put("capabilities", new JSONObject());
-            params.put("clientInfo", Map.of("name", "PaiAgent-one", "version", "0.1.0"));
-            request("initialize", params, INITIALIZE_TIMEOUT);
-            notify("notifications/initialized", new JSONObject());
-        }
-
-        JSONObject callTool(String name, JSONObject arguments) throws IOException, InterruptedException, TimeoutException {
-            JSONObject params = new JSONObject();
-            params.put("name", name);
-            params.put("arguments", arguments);
-            return request("tools/call", params, CALL_TIMEOUT);
-        }
-
-        private JSONObject request(String method, JSONObject params, Duration timeout)
-                throws IOException, InterruptedException, TimeoutException {
-            long id = requestIds.getAndIncrement();
-            JSONObject message = new JSONObject();
-            message.put("jsonrpc", "2.0");
-            message.put("id", id);
-            message.put("method", method);
-            message.put("params", params);
-            writeMessage(message);
-
-            CompletableFuture<JSONObject> future = CompletableFuture.supplyAsync(() -> {
-                try {
-                    while (true) {
-                        JSONObject response = readMessage();
-                        if (response == null) {
-                            throw new IOException("MCP server closed stdout");
-                        }
-                        if (response.containsKey("id") && response.getLongValue("id") == id) {
-                            return response;
-                        }
-                    }
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            }, readerExecutor);
-
-            JSONObject response;
-            try {
-                response = future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            } catch (java.util.concurrent.TimeoutException e) {
-                future.cancel(true);
-                throw new TimeoutException(method + " timed out; stderr=" + recentStderr());
-            } catch (java.util.concurrent.ExecutionException e) {
-                Throwable cause = e.getCause();
-                if (cause instanceof RuntimeException runtime && runtime.getCause() instanceof IOException ioException) {
-                    throw ioException;
-                }
-                if (cause instanceof IOException ioException) {
-                    throw ioException;
-                }
-                throw new IOException("MCP 调用失败: " + cause, cause);
-            }
-
-            JSONObject error = response.getJSONObject("error");
-            if (error != null) {
-                throw new IOException("MCP 调用失败: " + error.toJSONString());
-            }
-            JSONObject result = response.getJSONObject("result");
-            return result != null ? result : new JSONObject();
-        }
-
-        private void notify(String method, JSONObject params) throws IOException {
-            JSONObject message = new JSONObject();
-            message.put("jsonrpc", "2.0");
-            message.put("method", method);
-            message.put("params", params);
-            writeMessage(message);
-        }
-
-        private void writeMessage(JSONObject message) throws IOException {
-            output.write(message.toJSONString());
-            output.write("\n");
-            output.flush();
-        }
-
-        private JSONObject readMessage() throws IOException {
-            String line = input.readLine();
-            if (line == null) {
-                return null;
-            }
-            return JSON.parseObject(line);
-        }
-
-        private void collectStderr() {
-            try (BufferedReader stderr = new BufferedReader(new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = stderr.readLine()) != null) {
-                    appendStderr(line.trim());
-                }
-            } catch (IOException ignored) {
-                // Process cleanup path.
-            }
-        }
-
-        private synchronized void appendStderr(String line) {
-            if (!StringUtils.hasText(line)) {
-                return;
-            }
-            stderrLines.add(line);
-            while (stderrLines.size() > 8) {
-                stderrLines.remove(0);
-            }
-        }
-
-        private synchronized String recentStderr() {
-            return String.join("\n", stderrLines);
-        }
-
-        @Override
-        public void close() throws IOException {
-            readerExecutor.shutdownNow();
-            output.close();
-            input.close();
-            process.destroy();
-            try {
-                if (!process.waitFor(3, TimeUnit.SECONDS)) {
-                    process.destroyForcibly();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                process.destroyForcibly();
-            }
-        }
     }
 }
