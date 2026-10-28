@@ -168,6 +168,7 @@ const EditorPage = () => {
     prompt: '',
     skillName: '',
     maxSteps: 5,
+    toolCallMode: 'native',
     agentStrategy: 'none',
     tools: [] as string[],
     memoryEnabled: false,
@@ -277,6 +278,7 @@ const EditorPage = () => {
         prompt: (node.data?.prompt as string) || '',
         skillName: (node.data?.skillName as string) || '',
         maxSteps: (node.data?.maxSteps as number) || 5,
+        toolCallMode: (node.data?.toolCallMode as string) === 'prompt' ? 'prompt' : 'native',
         agentStrategy: (node.data?.agentStrategy as string) || (node.data?.type === 'react_agent' ? 'react' : 'none'),
         tools: normalizeAgentToolSelection(
           Array.isArray(node.data?.tools) ? node.data.tools as string[] : []
@@ -859,6 +861,7 @@ const EditorPage = () => {
       prompt: llmConfig.prompt,
       skillName: llmConfig.skillName,
       maxSteps: llmConfig.maxSteps,
+      toolCallMode: llmConfig.toolCallMode,
       agentStrategy: nextAgentStrategy,
       tools: nextAgentStrategy === 'react' ? buildRuntimeToolSelection(llmConfig.tools, llmConfig.mcpToolIds) : [],
       memoryEnabled: llmConfig.memoryEnabled,
@@ -1098,6 +1101,7 @@ const EditorPage = () => {
         prompt: llmConfig.prompt,
         skillName: llmConfig.skillName,
         maxSteps: llmConfig.maxSteps,
+        toolCallMode: llmConfig.toolCallMode,
         agentStrategy: nextAgentStrategy,
         tools: nextAgentStrategy === 'react' ? buildRuntimeToolSelection(llmConfig.tools, llmConfig.mcpToolIds) : [],
         memoryEnabled: llmConfig.memoryEnabled,
@@ -1761,6 +1765,21 @@ const EditorPage = () => {
                         />
                         <div className="workflow-field-hint">
 	                          每一步只能做一次工具调用或给出最终答案，超过步数会停止执行
+	                        </div>
+	                      </Form.Item>
+	                    )}
+
+	                    {isReActMode && (
+	                      <Form.Item label="工具调用方式">
+	                        <Select
+	                          value={llmConfig.toolCallMode}
+	                          onChange={(value) => setLlmConfig({ ...llmConfig, toolCallMode: value })}
+	                        >
+	                          <Select.Option value="native">原生函数调用（推荐）</Select.Option>
+	                          <Select.Option value="prompt">提示词 JSON（模型不支持函数调用时用）</Select.Option>
+	                        </Select>
+	                        <div className="workflow-field-hint">
+	                          原生：由模型服务商保证调用格式。提示词 JSON：模型必须只回复 JSON，连续两次格式不对节点会报错，不会把乱写的内容当成答案
 	                        </div>
 	                      </Form.Item>
 	                    )}
