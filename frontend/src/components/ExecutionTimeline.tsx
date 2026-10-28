@@ -13,6 +13,7 @@ interface ExecutionTimelineProps {
 const STATUS_COLOR: Record<string, string> = {
   SUCCESS: '#22c55e',
   FAILED: '#ef4444',
+  CANCELLED: '#f59e0b',
   RUNNING: '#2563eb',
   PENDING: '#94a3b8',
   SKIPPED: '#cbd5e1',

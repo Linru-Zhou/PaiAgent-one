@@ -13,7 +13,7 @@ import {
 import { createDefaultWorkflowNodes, normalizeWorkflowNode, normalizeWorkflowNodes } from '../utils/workflowNode';
 import { decorateEdge } from '../utils/workflowEdge';
 
-export type NodeRunStatus = 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED';
+export type NodeRunStatus = 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'CANCELLED';
 
 /**
  * 画布状态的唯一数据源。

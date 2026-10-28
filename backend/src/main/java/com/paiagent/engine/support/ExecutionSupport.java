@@ -201,6 +201,12 @@ public final class ExecutionSupport {
     }
 
     /** 节点对外展示的名字：优先用用户在画布上起的标签，没有才退回节点类型。 */
+    /** 取消后写进执行记录的说明；两个引擎共用，让同样的取消在哪个引擎上都是同一句话。 */
+    public static String cancelMessage(List<com.paiagent.dto.ExecutionResponse.NodeResult> nodeResults) {
+        long done = nodeResults.stream().filter(result -> "SUCCESS".equals(result.getStatus())).count();
+        return "执行已取消（已完成 " + done + " 个节点，其余未启动或已中断；可以从断点继续执行）";
+    }
+
     public static String displayName(com.paiagent.engine.model.WorkflowNode node) {
         if (node.getData() != null && node.getData().get("label") instanceof String label && !label.isBlank()) {
             return label;

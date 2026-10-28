@@ -132,6 +132,18 @@ public class ExecutionRecorder {
         executionSnapshotMapper.updateById(snapshot);
     }
 
+    /** 节点被取消中断：不是它自己出错，所以单独一个状态；续跑时和失败节点一样会被重新执行。 */
+    public void nodeCancelled(ExecutionSnapshot snapshot, String message, int duration) {
+        if (executionSnapshotMapper == null || snapshot == null || snapshot.getId() == null) {
+            return;
+        }
+        snapshot.setStatus("CANCELLED");
+        snapshot.setErrorMessage(message);
+        snapshot.setCompletedAt(LocalDateTime.now());
+        snapshot.setDuration(duration);
+        executionSnapshotMapper.updateById(snapshot);
+    }
+
     private void applyStart(ExecutionSnapshot snapshot, WorkflowNode node, Map<String, Object> nodeInput, int executionOrder) {
         snapshot.setNodeType(node.getType());
         snapshot.setNodeName(resolveNodeName(node));

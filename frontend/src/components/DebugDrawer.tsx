@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Drawer, Input, Button, Progress, Tag, Collapse, Alert, Modal } from 'antd';
-import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, StopOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import AudioPlayer from './AudioPlayer';
@@ -19,6 +19,7 @@ import {
   VIDEO_TASK_ACTION_KEY,
   VIDEO_TASK_PENDING_CODE,
   VideoTaskAction,
+  cancelWorkflowExecution,
   executeWorkflowStream,
   getLatestExecution,
   resumeWorkflowExecution,
@@ -29,7 +30,7 @@ const { TextArea } = Input;
 interface NodeResult {
   nodeId: string;
   nodeName: string;
-  status: 'SUCCESS' | 'FAILED' | 'RUNNING';
+  status: 'SUCCESS' | 'FAILED' | 'RUNNING' | 'CANCELLED';
   input: Record<string, unknown>;
   output: Record<string, unknown>;
   duration: number;
@@ -38,7 +39,7 @@ interface NodeResult {
 
 interface ExecutionResponse {
   executionId: number;
-  status: 'SUCCESS' | 'FAILED' | 'RUNNING';
+  status: 'SUCCESS' | 'FAILED' | 'RUNNING' | 'CANCELLING' | 'CANCELLED';
   nodeResults: NodeResult[];
   outputData: unknown;
   duration: number;
@@ -464,6 +465,9 @@ const RichOutput = ({
 const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerProps) => {
   const [inputData, setInputData] = useState('');
   const [executing, setExecuting] = useState(false);
+  // 正在流式执行的那次的编号（取消要用）；cancelling 表示取消已受理、节点还在退出
+  const [runningExecutionId, setRunningExecutionId] = useState(0);
+  const [cancelling, setCancelling] = useState(false);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [nodeStatusMap, setNodeStatusMap] = useState<Map<string, NodeResult>>(new Map());
@@ -532,13 +536,17 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     const restoredLogs = [
       `已加载最近一次执行记录 #${result.executionId}`,
       ...restoredNodeResults.flatMap((node) => {
-        const nodeLog = node.status === 'FAILED'
-          ? `❌ 节点 [${node.nodeName}] 执行失败${node.error ? `: ${node.error}` : ''}`
-          : `✅ 节点 [${node.nodeName}] 执行成功,耗时 ${formatDuration(node.duration)}`;
+        const nodeLog = node.status === 'CANCELLED'
+          ? `⏹ 节点 [${node.nodeName}] 已取消`
+          : node.status === 'FAILED'
+            ? `❌ 节点 [${node.nodeName}] 执行失败${node.error ? `: ${node.error}` : ''}`
+            : `✅ 节点 [${node.nodeName}] 执行成功,耗时 ${formatDuration(node.duration)}`;
         const toolLogs = formatToolTraceLogs(node.output);
         return [nodeLog, ...toolLogs];
       }),
-      `${result.status === 'SUCCESS' ? '✅' : '❌'} 工作流执行${result.status === 'SUCCESS' ? '成功' : '失败'},总耗时 ${formatDuration(result.duration)}`,
+      result.status === 'CANCELLED' || result.status === 'CANCELLING'
+        ? `⏹ 工作流${result.status === 'CANCELLED' ? '已取消' : '正在取消'},总耗时 ${formatDuration(result.duration)}`
+        : `${result.status === 'SUCCESS' ? '✅' : '❌'} 工作流执行${result.status === 'SUCCESS' ? '成功' : '失败'},总耗时 ${formatDuration(result.duration)}`,
     ];
 
     setLogs(restoredLogs.map((message) => `[历史] ${message}`));
@@ -647,6 +655,8 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     }
 
     setExecuting(true);
+    setCancelling(false);
+    setRunningExecutionId(0);
     setExecutionResult(null);
     setLogs([]);
     setNodeStatusMap(new Map());
@@ -671,6 +681,7 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
                 const parsedExecutionId = Number.parseInt(event.data, 10);
                 activeExecutionId = Number.isNaN(parsedExecutionId) ? 0 : parsedExecutionId;
               }
+              setRunningExecutionId(activeExecutionId);
               addLog('🚀 工作流开始执行');
               break;
               
@@ -727,11 +738,15 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
               
             case 'NODE_ERROR':
               if (event.nodeId && event.nodeName) {
-                addLog(`❌ 节点 [${event.nodeName}] 执行失败: ${event.message}`);
+                // 被取消的节点和出错的节点走同一个事件，后端取消时的文案固定以"执行已取消"开头
+                const wasCancelled = event.status === 'CANCELLED' || event.message?.startsWith('执行已取消') === true;
+                addLog(wasCancelled
+                  ? `⏹ 节点 [${event.nodeName}] 已被取消`
+                  : `❌ 节点 [${event.nodeName}] 执行失败: ${event.message}`);
                 const nodeResult: NodeResult = {
                   nodeId: event.nodeId,
                   nodeName: event.nodeName,
-                  status: 'FAILED',
+                  status: wasCancelled ? 'CANCELLED' : 'FAILED',
                   input: {},
                   output: {},
                   duration: 0,
@@ -745,15 +760,17 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
               
             case 'WORKFLOW_COMPLETE': {
               const totalDuration = event.message?.match(/总耗时 (\d+)ms/)?.[1] || '0';
-              addLog(`${event.status === 'SUCCESS' ? '✅' : '❌'} 工作流执行${event.status === 'SUCCESS' ? '成功' : '失败'},总耗时 ${formatDuration(totalDuration)}`);
-              
+              addLog(event.status === 'CANCELLED'
+                ? `⏹ 工作流已取消,总耗时 ${formatDuration(totalDuration)}`
+                : `${event.status === 'SUCCESS' ? '✅' : '❌'} 工作流执行${event.status === 'SUCCESS' ? '成功' : '失败'},总耗时 ${formatDuration(totalDuration)}`);
+
               setExecutionResult({
                 executionId: activeExecutionId,
-                status: event.status as 'SUCCESS' | 'FAILED',
+                status: event.status as 'SUCCESS' | 'FAILED' | 'CANCELLED',
                 nodeResults: Array.from(tempNodeStatusMap.values()),
                 outputData: event.data || {},
                 duration: parseInt(totalDuration),
-                errorMessage: event.status === 'FAILED' ? event.message : undefined
+                errorMessage: event.status === 'FAILED' || event.status === 'CANCELLED' ? event.message : undefined
               });
               if (event.status === 'FAILED' && activeExecutionId === 0) {
                 syncLatestExecutionResult(workflowId);
@@ -764,6 +781,8 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
         },
         () => {
           setExecuting(false);
+          setCancelling(false);
+          setRunningExecutionId(0);
         },
         (error: Error) => {
           const errorMsg = error.message.includes('连接失败') 
@@ -771,11 +790,42 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
             : error.message;
           addLog(`❌ 执行异常: ${errorMsg}`);
           setExecuting(false);
+          setCancelling(false);
+          setRunningExecutionId(0);
         }
       );
     } catch (error) {
       addLog(`❌ 执行异常: ${error instanceof Error ? error.message : '未知错误'}`);
       setExecuting(false);
+      setCancelling(false);
+      setRunningExecutionId(0);
+    }
+  };
+
+  /**
+   * 取消正在运行的执行。后端是协作式取消：马上返回"已受理"，运行中的节点被中断后，
+   * SSE 流会收到 WORKFLOW_COMPLETE(CANCELLED)；这期间按钮保持禁用，避免重复点击。
+   */
+  const handleCancel = async () => {
+    if (!workflowId || runningExecutionId <= 0 || cancelling) {
+      return;
+    }
+    setCancelling(true);
+    addLog(`⏹ 请求取消执行 #${runningExecutionId}...`);
+    try {
+      const result = await cancelWorkflowExecution(workflowId, runningExecutionId);
+      if (result.code !== 200) {
+        // 409：这次执行刚好已经结束了，不是错误，结果马上就会通过流到达
+        addLog(result.code === 409 ? `ℹ️ ${result.message}` : `❌ 取消失败: ${result.message}`);
+        setCancelling(false);
+        return;
+      }
+      addLog(result.data.status === 'CANCELLED'
+        ? '⏹ 已取消'
+        : '⏹ 已受理取消,正在中断运行中的节点（不响应中断的节点要等它自己返回）...');
+    } catch (error) {
+      addLog(`❌ 取消失败: ${error instanceof Error ? error.message : '未知错误'}`);
+      setCancelling(false);
     }
   };
 
@@ -791,7 +841,7 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     resumingRef.current = true;
     const failedNode = request.startNodeId
       ? undefined
-      : executionResult.nodeResults.find((node) => node.status === 'FAILED');
+      : executionResult.nodeResults.find((node) => node.status === 'FAILED' || node.status === 'CANCELLED');
     setExecuting(true);
     addLog(`🔁 从执行记录 #${executionResult.executionId} 的失败断点继续执行...`);
     if (videoTaskAction) {
@@ -933,6 +983,9 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     } else if (nodeResult.status === 'FAILED') {
       statusColor = 'error';
       statusIcon = <CloseCircleOutlined />;
+    } else if (nodeResult.status === 'CANCELLED') {
+      statusColor = 'warning';
+      statusIcon = <StopOutlined />;
     } else if (nodeResult.status === 'RUNNING') {
       statusColor = 'processing';
       statusIcon = <LoadingOutlined />;
@@ -978,7 +1031,12 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
             <RichOutput value={nodeResult.output} preferOutputText />
           </div>
           {nodeResult.error && (
-            <Alert message="错误信息" description={nodeResult.error} type="error" showIcon />
+            <Alert
+              message={nodeResult.status === 'CANCELLED' ? '已取消' : '错误信息'}
+              description={nodeResult.error}
+              type={nodeResult.status === 'CANCELLED' ? 'warning' : 'error'}
+              showIcon
+            />
           )}
         </div>
       ),
@@ -1025,6 +1083,19 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
           >
             {executing ? '执行中...' : '执行工作流'}
           </Button>
+          {executing && runningExecutionId > 0 && (
+            <Button
+              danger
+              icon={<StopOutlined />}
+              onClick={handleCancel}
+              loading={cancelling}
+              disabled={cancelling}
+              block
+              style={{ marginTop: 8 }}
+            >
+              {cancelling ? '正在取消...' : '取消执行'}
+            </Button>
+          )}
         </section>
 
         {(executing || executionResult) && (
@@ -1048,14 +1119,14 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
                   <div className="flex items-center justify-between mb-2">
                     <span>
                       状态:{' '}
-                      <Tag color={executionResult?.status === 'SUCCESS' ? 'success' : executionResult?.status === 'FAILED' ? 'error' : 'processing'}>
-                        {executionResult?.status === 'SUCCESS' ? '成功' : executionResult?.status === 'FAILED' ? '失败' : '执行中'}
+                      <Tag color={executionResult?.status === 'SUCCESS' ? 'success' : executionResult?.status === 'FAILED' ? 'error' : executionResult?.status === 'CANCELLED' ? 'warning' : 'processing'}>
+                        {executionResult?.status === 'SUCCESS' ? '成功' : executionResult?.status === 'FAILED' ? '失败' : executionResult?.status === 'CANCELLED' ? '已取消' : executionResult?.status === 'CANCELLING' || cancelling ? '取消中' : '执行中'}
                       </Tag>
                     </span>
                   </div>
                   <Progress 
                     percent={getProgress()} 
-                    status={executionResult?.status === 'SUCCESS' ? 'success' : executionResult?.status === 'FAILED' ? 'exception' : 'active'} 
+                    status={executionResult?.status === 'SUCCESS' ? 'success' : executionResult?.status === 'FAILED' ? 'exception' : executionResult?.status === 'CANCELLED' ? 'normal' : 'active'} 
                   />
                   <div className="mt-2 text-sm text-gray-600">
                     已完成节点: {getCompletedNodeCount()} / {getProgressTotal()}
@@ -1080,7 +1151,7 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
           </section>
         )}
 
-        {executionResult?.status === 'FAILED' && executionResult.executionId > 0 && workflowId && (
+        {(executionResult?.status === 'FAILED' || executionResult?.status === 'CANCELLED') && executionResult.executionId > 0 && workflowId && (
           <section className="debug-panel-section">
             <div className="debug-section-header">
               <div>
@@ -1089,7 +1160,8 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
               </div>
             </div>
             <ResumePanel
-              failedNodes={currentNodeResults.filter((n) => n.status === 'FAILED').map((n) => ({ nodeId: n.nodeId, nodeName: n.nodeName, error: n.error }))}
+              cancelled={executionResult.status === 'CANCELLED'}
+              failedNodes={currentNodeResults.filter((n) => n.status === 'FAILED' || n.status === 'CANCELLED').map((n) => ({ nodeId: n.nodeId, nodeName: n.nodeName, error: n.error }))}
               allNodes={currentNodeResults.map((n) => ({ nodeId: n.nodeId, nodeName: n.nodeName }))}
               loading={executing}
               onResume={handleResume}

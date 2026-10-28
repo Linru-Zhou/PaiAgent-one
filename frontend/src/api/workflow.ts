@@ -41,7 +41,7 @@ export interface ApiResult<T> {
 export interface ExecutionNodeResult {
   nodeId: string;
   nodeName: string;
-  status: 'SUCCESS' | 'FAILED' | 'RUNNING';
+  status: 'SUCCESS' | 'FAILED' | 'RUNNING' | 'CANCELLED';
   input?: unknown;
   output?: unknown;
   duration?: number;
@@ -53,7 +53,8 @@ export interface ExecutionNodeResult {
 
 export interface ExecutionResponse {
   executionId: number;
-  status: 'SUCCESS' | 'FAILED' | 'RUNNING';
+  /** CANCELLING：取消已受理、节点正在退出；CANCELLED：已取消（已完成的节点结果保留，可以续跑） */
+  status: 'SUCCESS' | 'FAILED' | 'RUNNING' | 'CANCELLING' | 'CANCELLED';
   inputData?: unknown;
   nodeResults: ExecutionNodeResult[];
   outputData: unknown;
@@ -83,7 +84,7 @@ export interface ExecutionSnapshot {
   nodeId: string;
   nodeType: string;
   nodeName?: string;
-  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED';
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED' | 'CANCELLED';
   inputData?: Record<string, unknown>;
   outputData?: Record<string, unknown>;
   errorMessage?: string;
@@ -197,6 +198,24 @@ export const resumeWorkflowExecution = (
     useSnapshotVariables: true,
     ...request,
   }, { timeout: RESUME_TIMEOUT_MS });
+};
+
+export interface CancelExecutionResult {
+  executionId: number;
+  /** CANCELLING：已受理，节点正在退出；CANCELLED：已经取消 */
+  status: 'CANCELLING' | 'CANCELLED';
+  message?: string;
+}
+
+/**
+ * 取消一次正在运行的执行。协作式：马上返回 CANCELLING，节点退出后状态变成 CANCELLED；
+ * 重复取消是幂等的；已经结束（SUCCESS / FAILED）返回业务码 409。
+ */
+export const cancelWorkflowExecution = (
+  id: number,
+  executionId: number
+): Promise<ApiResult<CancelExecutionResult>> => {
+  return api.post(`/api/workflows/${id}/executions/${executionId}/cancel`);
 };
 
 export interface ExecutionEvent {

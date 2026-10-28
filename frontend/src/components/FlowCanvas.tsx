@@ -38,6 +38,7 @@ type WorkflowNodeData = {
   inputParams?: unknown[];
   outputParams?: unknown[];
   maxSteps?: number;
+  toolCallMode?: string;
   agentStrategy?: string;
   tools?: string[];
   knowledgeBaseId?: string;

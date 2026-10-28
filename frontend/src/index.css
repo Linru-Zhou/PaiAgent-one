@@ -654,6 +654,7 @@ select {
 .workflow-node.run-RUNNING { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22); }
 .workflow-node.run-SUCCESS { border-color: #22c55e; }
 .workflow-node.run-FAILED { border-color: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.25); }
+.workflow-node.run-CANCELLED { border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.22); }
 .workflow-node.run-SKIPPED { opacity: 0.55; }
 
 .workflow-node.is-selected {

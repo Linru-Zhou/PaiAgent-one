@@ -42,6 +42,19 @@ public class TestNodeExecutors {
         }
     }
 
+    /** 模拟阻塞在不响应中断的调用上的节点（比如某些网络读）：被中断也继续干到自己结束。 */
+    private static void sleepIgnoringInterrupts(long millis) {
+        long deadline = System.nanoTime() + millis * 1_000_000L;
+        long remainingMs;
+        while ((remainingMs = (deadline - System.nanoTime()) / 1_000_000L) > 0) {
+            try {
+                Thread.sleep(remainingMs);
+            } catch (InterruptedException ignored) {
+                // 故意吞掉
+            }
+        }
+    }
+
     @Bean
     public NodeExecutor testTaskNodeExecutor() {
         return new NodeExecutor() {
@@ -54,7 +67,11 @@ public class TestNodeExecutors {
                     long sleepMs = data.get("sleepMs") instanceof Number n ? n.longValue() : 0L;
                     int failTimes = data.get("failTimes") instanceof Number n ? n.intValue() : 0;
                     if (sleepMs > 0) {
-                        Thread.sleep(sleepMs);
+                        if (Boolean.TRUE.equals(data.get("ignoreInterrupt"))) {
+                            sleepIgnoringInterrupts(sleepMs);
+                        } else {
+                            Thread.sleep(sleepMs);
+                        }
                     }
                     if (attempt <= failTimes) {
                         throw new IllegalStateException("模拟节点失败: " + node.getId() + " 第 " + attempt + " 次调用");

@@ -21,6 +21,7 @@ import java.util.List;
 public class StaleExecutionReaper {
 
     static final String MESSAGE = "执行长时间无心跳（疑似服务重启或进程中断），已自动标记为失败，可从断点继续执行";
+    static final String CANCELLED_MESSAGE = "执行已取消（取消期间服务中断，已自动收尾）";
 
     @Autowired
     private ExecutionRecordMapper executionRecordMapper;
@@ -49,6 +50,16 @@ public class StaleExecutionReaper {
                     executionSnapshotMapper.failRunningByExecutionId(id, MESSAGE);
                 }
                 log.warn("回收僵尸执行 #{}", id);
+            }
+        }
+        // 取消已受理但节点一直没退出、之后又没有心跳：同样是进程中断留下的，收尾成 CANCELLED
+        for (Long id : executionRecordMapper.selectStaleCancellingIds(threshold)) {
+            if (executionRecordMapper.cancelIfCancelling(id, CANCELLED_MESSAGE) > 0) {
+                reaped++;
+                if (executionSnapshotMapper != null) {
+                    executionSnapshotMapper.cancelRunningByExecutionId(id, CANCELLED_MESSAGE);
+                }
+                log.warn("回收取消中的僵尸执行 #{}", id);
             }
         }
         return reaped;

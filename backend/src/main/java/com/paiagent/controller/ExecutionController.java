@@ -10,6 +10,7 @@ import com.paiagent.dto.ExecutionSnapshotResponse;
 import com.paiagent.dto.ExecutionVariableResponse;
 import com.paiagent.dto.ResumeExecutionRequest;
 import com.paiagent.engine.EngineSelector;
+import com.paiagent.engine.cancel.ExecutionCanceller;
 import com.paiagent.engine.ExecutionConflictException;
 import com.paiagent.engine.ExecutionDispatcher;
 import com.paiagent.engine.ExecutionRejectedException;
@@ -63,6 +64,9 @@ public class ExecutionController {
 
     @Autowired
     private WorkflowEngine workflowEngine;
+
+    @Autowired
+    private ExecutionCanceller executionCanceller;
 
     @Autowired
     private ExecutionRecordMapper executionRecordMapper;
@@ -169,8 +173,8 @@ public class ExecutionController {
         response.setOutputData(record.getOutputData());
         response.setDuration(record.getDuration());
         response.setErrorMessage(record.getErrorMessage());
-        if ("RUNNING".equals(record.getStatus())) {
-            // 执行中时 node_results 还没写入，实时进度来自逐节点落库的快照
+        if ("RUNNING".equals(record.getStatus()) || "CANCELLING".equals(record.getStatus())) {
+            // 执行中（含正在取消）时 node_results 还没写入，实时进度来自逐节点落库的快照
             List<ExecutionResponse.NodeResult> live = new ArrayList<>();
             for (ExecutionSnapshot snapshot : executionSnapshotMapper.selectByExecutionId(executionId)) {
                 ExecutionResponse.NodeResult nodeResult = new ExecutionResponse.NodeResult();
@@ -276,6 +280,27 @@ public class ExecutionController {
         }
     }
     
+    @Operation(summary = "取消一次正在运行的执行（协作式：RUNNING → CANCELLING → CANCELLED）。"
+            + "重复取消是幂等的；已经结束（SUCCESS / FAILED）返回 409；已完成的节点快照保留，可以再 resume")
+    @PostMapping("/{id}/executions/{executionId}/cancel")
+    public Result<Map<String, Object>> cancelExecution(@PathVariable Long id, @PathVariable Long executionId) {
+        try {
+            ExecutionCanceller.Outcome outcome = executionCanceller.cancel(id, executionId);
+            Map<String, Object> data = new java.util.LinkedHashMap<>();
+            data.put("executionId", outcome.executionId());
+            data.put("status", outcome.status());
+            data.put("message", outcome.message());
+            return Result.success(data);
+        } catch (ExecutionConflictException e) {
+            return Result.error(409, e.getMessage());
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        } catch (Exception e) {
+            log.error("取消执行失败", e);
+            return Result.error("取消执行失败: " + e.getMessage());
+        }
+    }
+
     @Operation(summary = "实时执行工作流(SSE)")
     @GetMapping(value = "/{id}/execute/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter executeWorkflowStream(@PathVariable Long id,

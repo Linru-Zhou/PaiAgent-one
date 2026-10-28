@@ -31,6 +31,11 @@ public interface ExecutionSnapshotMapper extends BaseMapper<ExecutionSnapshot> {
             + "WHERE execution_id = #{executionId} AND status = 'RUNNING'")
     int failRunningByExecutionId(@Param("executionId") Long executionId, @Param("message") String message);
 
+    /** 把某次执行里仍处于 RUNNING 的节点快照标记为 CANCELLED（取消一个没有进程在跑的僵尸执行时用）。 */
+    @Update("UPDATE execution_snapshot SET status = 'CANCELLED', error_message = #{message}, completed_at = CURRENT_TIMESTAMP "
+            + "WHERE execution_id = #{executionId} AND status = 'RUNNING'")
+    int cancelRunningByExecutionId(@Param("executionId") Long executionId, @Param("message") String message);
+
     /**
      * 根据执行记录 ID 删除快照
      */

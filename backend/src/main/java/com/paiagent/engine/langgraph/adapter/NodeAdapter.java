@@ -100,16 +100,21 @@ public class NodeAdapter {
 
         NodeRun run = nodeRunner.run(ctx.record, ctx.flowId, node, input,
                 ctx.sortedIndex.get(node.getId()), ctx.eventCallback);
-        ctx.nodeResults.add(run.nodeResult);
+        if (run.nodeResult != null) {
+            ctx.nodeResults.add(run.nodeResult);
+        }
 
         Map<String, Object> stateUpdate = new HashMap<>();
         stateUpdate.put("currentNodeId", node.getId());
         if (run.error != null) {
             // 同层的兄弟节点不会因此被打断（与 DAG 引擎一致：同层跑完并落快照，续跑时可直接复用）；
-            // 层与层之间的路由函数看到失败后会直接走 END
+            // 层与层之间的路由函数看到失败后会直接走 END。被取消的节点同样当作"这一层没跑完"处理，
+            // 最终状态由引擎区分是 FAILED 还是 CANCELLED
             ctx.recordFailure(run);
-            stateUpdate.put("status", "FAILED");
-            stateUpdate.put("errorMessage", "节点 " + node.getId() + " 执行失败: " + run.error.getMessage());
+            stateUpdate.put("status", run.cancelled ? "CANCELLED" : "FAILED");
+            stateUpdate.put("errorMessage", run.cancelled
+                    ? NodeRunner.CANCELLED_MESSAGE
+                    : "节点 " + node.getId() + " 执行失败: " + run.error.getMessage());
             return stateUpdate;
         }
 

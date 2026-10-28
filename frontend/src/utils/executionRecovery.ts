@@ -91,25 +91,29 @@ export class RecoveryTracker {
           data: { input: parseIfJson(node.input), output: parseIfJson(node.output) },
           timestamp: now,
         });
-      } else if (node.status === 'FAILED') {
+      } else if (node.status === 'FAILED' || node.status === 'CANCELLED') {
+        // 被取消的节点和出错的节点走同一条事件，由界面按 error 文案区分（后端取消时的文案固定为"执行已取消"）
         this.finished.add(node.nodeId);
         events.push({
           eventType: 'NODE_ERROR',
           nodeId: node.nodeId,
           nodeName: name,
-          status: 'FAILED',
-          message: node.error || '节点执行失败',
+          status: node.status,
+          message: node.error || (node.status === 'CANCELLED' ? '执行已取消' : '节点执行失败'),
           timestamp: now,
         });
       }
     }
 
-    const terminal = poll.status !== 'RUNNING';
+    // CANCELLING 是"取消已受理、节点正在退出"，还没有结束，要继续轮询到 CANCELLED
+    const terminal = poll.status !== 'RUNNING' && poll.status !== 'CANCELLING';
     if (terminal) {
       events.push({
         eventType: 'WORKFLOW_COMPLETE',
         status: poll.status,
-        message: poll.status === 'SUCCESS' ? `工作流执行成功，总耗时 ${poll.duration ?? 0}ms` : (poll.errorMessage || `工作流执行失败，总耗时 ${poll.duration ?? 0}ms`),
+        message: poll.status === 'SUCCESS'
+          ? `工作流执行成功，总耗时 ${poll.duration ?? 0}ms`
+          : (poll.errorMessage || (poll.status === 'CANCELLED' ? `工作流已取消，总耗时 ${poll.duration ?? 0}ms` : `工作流执行失败，总耗时 ${poll.duration ?? 0}ms`)),
         data: parseIfJson(poll.outputData),
         timestamp: now,
       });

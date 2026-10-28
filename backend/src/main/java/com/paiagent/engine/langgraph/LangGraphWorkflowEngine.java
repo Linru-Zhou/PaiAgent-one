@@ -3,7 +3,9 @@ package com.paiagent.engine.langgraph;
 import com.paiagent.dto.ExecutionEvent;
 import com.paiagent.dto.ExecutionResponse;
 import com.paiagent.engine.ExecutionRecorder;
+import com.paiagent.engine.NodeRunner.NodeRun;
 import com.paiagent.engine.WorkflowConfigParser;
+import com.paiagent.engine.cancel.ExecutionCancellations;
 import com.paiagent.engine.WorkflowExecutor;
 import com.paiagent.engine.dag.DAGParser;
 import com.paiagent.engine.langgraph.builder.GraphBuilder;
@@ -57,6 +59,10 @@ public class LangGraphWorkflowEngine implements WorkflowExecutor {
     @Autowired
     private DAGParser dagParser;
 
+    /** 取消登记表；单测里手工构造时没有，此时不支持取消。 */
+    @Autowired(required = false)
+    private ExecutionCancellations cancellations;
+
     @Override
     public ExecutionResponse execute(Workflow workflow, String inputData) {
         return executeWithCallback(workflow, inputData, null);
@@ -74,8 +80,9 @@ public class LangGraphWorkflowEngine implements WorkflowExecutor {
         EdgeIndexes indexes = EdgeIndexes.of(edges);
 
         ExecutionRecord record = recorder.start(workflow.getId(), inputData);
-        if (eventCallback != null) {
-            eventCallback.accept(ExecutionEvent.workflowStart(record.getId()));
+        // 登记取消标记：登记表里有它，取消请求才找得到这次执行；注销放在落库之后
+        if (cancellations != null) {
+            cancellations.register(record.getId());
         }
 
         // 并行分支里的节点会从不同线程回调事件，SseEmitter 不是线程安全的，统一串行化
@@ -84,33 +91,56 @@ public class LangGraphWorkflowEngine implements WorkflowExecutor {
         String status = "SUCCESS";
         String errorMessage = null;
         String outputData = null;
+        ExecutionResponse response;
 
         try {
-            CompiledGraph<AgentState> graph = graphBuilder.buildGraph(dagParser.groupIntoLevels(sortedNodes, edges), ctx);
-            graph.invoke(stateManager.initializeState(inputData));
-
-            if (ctx.failure != null) {
-                status = "FAILED";
-                errorMessage = "节点 " + ctx.failure.node.getId() + " 执行失败: " + ctx.failure.error.getMessage();
-            } else {
-                outputData = toJson(stripRuntimeFields(ctx.currentInput));
+            // 先登记再对外公布执行编号（WORKFLOW_START 事件）：客户端拿到编号后立刻取消，也一定找得到这次执行
+            if (eventCallback != null) {
+                eventCallback.accept(ExecutionEvent.workflowStart(record.getId()));
             }
-        } catch (Exception e) {
-            Throwable cause = e instanceof CompletionException && e.getCause() != null ? e.getCause() : e;
-            log.error("LangGraph 执行失败", cause);
-            status = "FAILED";
-            errorMessage = cause.getMessage();
+            try {
+                CompiledGraph<AgentState> graph = graphBuilder.buildGraph(dagParser.groupIntoLevels(sortedNodes, edges), ctx);
+                graph.invoke(stateManager.initializeState(inputData));
+
+                NodeRun failure = ctx.failure;
+                if (failure != null && !failure.cancelled) {
+                    status = "FAILED";
+                    errorMessage = "节点 " + failure.node.getId() + " 执行失败: " + failure.error.getMessage();
+                } else if (failure != null) {
+                    status = "CANCELLED";
+                    errorMessage = ExecutionSupport.cancelMessage(new ArrayList<>(ctx.nodeResults));
+                } else {
+                    outputData = toJson(stripRuntimeFields(ctx.currentInput));
+                }
+            } catch (Exception e) {
+                Throwable cause = e instanceof CompletionException && e.getCause() != null ? e.getCause() : e;
+                log.error("LangGraph 执行失败", cause);
+                status = "FAILED";
+                errorMessage = cause.getMessage();
+            }
+
+            List<ExecutionResponse.NodeResult> nodeResults = new ArrayList<>(ctx.nodeResults);
+            nodeResults.sort(Comparator.comparingInt(r -> ctx.sortedIndex.getOrDefault(r.getNodeId(), Integer.MAX_VALUE)));
+
+            int duration = (int) (System.currentTimeMillis() - startTime);
+            if (safeCallback != null) {
+                safeCallback.accept(ExecutionEvent.workflowComplete(status, ctx.currentInput, duration));
+            }
+            recorder.finish(record, workflow.getId(), inputData, status, outputData, toJson(nodeResults), errorMessage, duration);
+
+            response = buildResponse(record, inputData, status, nodeResults, outputData, duration, errorMessage);
+        } finally {
+            if (cancellations != null) {
+                cancellations.unregister(record.getId());
+            }
         }
+        log.info("工作流执行完成: status={}, duration={}ms", status, response.getDuration());
+        return response;
+    }
 
-        List<ExecutionResponse.NodeResult> nodeResults = new ArrayList<>(ctx.nodeResults);
-        nodeResults.sort(Comparator.comparingInt(r -> ctx.sortedIndex.getOrDefault(r.getNodeId(), Integer.MAX_VALUE)));
-
-        int duration = (int) (System.currentTimeMillis() - startTime);
-        if (safeCallback != null) {
-            safeCallback.accept(ExecutionEvent.workflowComplete(status, ctx.currentInput, duration));
-        }
-        recorder.finish(record, workflow.getId(), inputData, status, outputData, toJson(nodeResults), errorMessage, duration);
-
+    private ExecutionResponse buildResponse(ExecutionRecord record, String inputData, String status,
+                                            List<ExecutionResponse.NodeResult> nodeResults, String outputData,
+                                            int duration, String errorMessage) {
         ExecutionResponse response = new ExecutionResponse();
         response.setExecutionId(record.getId());
         response.setStatus(status);
@@ -119,7 +149,6 @@ public class LangGraphWorkflowEngine implements WorkflowExecutor {
         response.setOutputData(outputData);
         response.setDuration(duration);
         response.setErrorMessage(errorMessage);
-        log.info("工作流执行完成: status={}, duration={}ms", status, duration);
         return response;
     }
 

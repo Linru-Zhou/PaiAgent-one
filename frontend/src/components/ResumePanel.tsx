@@ -13,13 +13,15 @@ interface ResumePanelProps {
   allNodes: Array<{ nodeId: string; nodeName: string }>;
   loading: boolean;
   onResume: (request: ResumeExecutionRequest) => void;
+  /** 这次执行是被用户取消的（不是出错）：提示文案和颜色相应调整 */
+  cancelled?: boolean;
 }
 
 /**
  * 断点续跑面板：默认从失败节点续跑，已成功的节点直接复用，不会重复执行；
  * 也可以指定从某个节点重跑，或先改写变量再续跑（例如修正导致失败的输入）。
  */
-const ResumePanel = ({ failedNodes, allNodes, loading, onResume }: ResumePanelProps) => {
+const ResumePanel = ({ failedNodes, allNodes, loading, onResume, cancelled = false }: ResumePanelProps) => {
   const [startNodeId, setStartNodeId] = useState<string | undefined>();
   const [skipSuccess, setSkipSuccess] = useState(true);
   const [variablesText, setVariablesText] = useState('');
@@ -46,12 +48,18 @@ const ResumePanel = ({ failedNodes, allNodes, loading, onResume }: ResumePanelPr
   return (
     <div className="resume-panel">
       <Alert
-        type="error"
+        type={cancelled ? 'warning' : 'error'}
         showIcon
-        message={failedNodes.length > 0
-          ? `失败节点：${failedNodes.map((n) => n.nodeName).join('、')}`
-          : '本次执行失败'}
-        description={failedNodes.find((n) => n.error)?.error}
+        message={cancelled
+          ? (failedNodes.length > 0
+            ? `已取消，被中断的节点：${failedNodes.map((n) => n.nodeName).join('、')}`
+            : '本次执行已取消，后面的节点没有启动')
+          : (failedNodes.length > 0
+            ? `失败节点：${failedNodes.map((n) => n.nodeName).join('、')}`
+            : '本次执行失败')}
+        description={cancelled
+          ? '取消前已完成的节点结果保留；续跑只会重新执行没完成的节点。'
+          : failedNodes.find((n) => n.error)?.error}
       />
       <div className="resume-field">
         <div className="debug-field-label">从哪个节点开始（默认：失败节点）</div>

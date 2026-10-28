@@ -59,3 +59,29 @@ test('toDiffExecution parses JSON strings so engines are compared structurally, 
   const report = diffExecutions(dag, lg);
   assert.equal(report.outputsIdentical, true, '仅键顺序不同，不应判为不一致');
 });
+
+test('CANCELLING is not terminal: keep polling until the nodes have actually exited', () => {
+  const t = new RecoveryTracker();
+  const stopping = t.next({ status: 'CANCELLING', nodeResults: [node('a', 'SUCCESS', { duration: 3 }), node('b', 'RUNNING')] });
+
+  assert.equal(stopping.terminal, false, '取消已受理但节点还在退出，不能当作结束');
+  assert.ok(!stopping.events.some((e) => e.eventType === 'WORKFLOW_COMPLETE'));
+});
+
+test('a cancelled execution ends with CANCELLED; the interrupted node is reported as cancelled, not as a plain failure', () => {
+  const t = new RecoveryTracker();
+  const done = t.next({
+    status: 'CANCELLED', duration: 1500,
+    errorMessage: '执行已取消（已完成 1 个节点，其余未启动或已中断；可以从断点继续执行）',
+    nodeResults: [node('a', 'SUCCESS', { duration: 3 }), node('b', 'CANCELLED', { error: '执行已取消' })],
+  });
+
+  assert.equal(done.terminal, true);
+  const nodeError = done.events.find((e) => e.eventType === 'NODE_ERROR');
+  assert.equal(nodeError?.status, 'CANCELLED');
+  assert.match(nodeError!.message!, /执行已取消/, '界面靠这句文案把它显示成"已取消"而不是"失败"');
+  const complete = done.events.at(-1)!;
+  assert.equal(complete.eventType, 'WORKFLOW_COMPLETE');
+  assert.equal(complete.status, 'CANCELLED');
+  assert.match(complete.message!, /已取消/);
+});

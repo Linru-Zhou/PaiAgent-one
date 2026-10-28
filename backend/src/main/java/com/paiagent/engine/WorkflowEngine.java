@@ -5,6 +5,7 @@ import com.paiagent.dto.ExecutionEvent;
 import com.paiagent.dto.ExecutionResponse;
 import com.paiagent.dto.ResumeExecutionRequest;
 import com.paiagent.engine.NodeRunner.NodeRun;
+import com.paiagent.engine.cancel.ExecutionCancellations;
 import com.paiagent.engine.dag.DAGParser;
 import com.paiagent.engine.model.WorkflowConfig;
 import com.paiagent.engine.model.WorkflowEdge;
@@ -64,6 +65,10 @@ public class WorkflowEngine implements WorkflowExecutor {
     @Autowired(required = false)
     private ExecutionVariableMapper executionVariableMapper;
 
+    /** 取消登记表；单测里手工构造时没有，此时不支持取消。 */
+    @Autowired(required = false)
+    private ExecutionCancellations cancellations;
+
     /** 节点并发线程池；为 null（比如单测里手工构造）时退化为串行执行 */
     @Autowired(required = false)
     @Qualifier("nodePool")
@@ -88,10 +93,6 @@ public class WorkflowEngine implements WorkflowExecutor {
         EdgeIndexes indexes = EdgeIndexes.of(edges);
         ExecutionRecord record = recorder.start(workflow.getId(), inputData);
 
-        if (eventCallback != null) {
-            eventCallback.accept(ExecutionEvent.workflowStart(record.getId()));
-        }
-
         return executeNodes(record, workflow.getId(), inputData, sortedNodes, indexes, new ResumeState(), startTime, eventCallback);
     }
 
@@ -114,6 +115,9 @@ public class WorkflowEngine implements WorkflowExecutor {
         String observedStatus = record.getStatus();
         if ("RUNNING".equals(observedStatus)) {
             throw new ExecutionConflictException("该执行正在进行中，请勿重复提交");
+        }
+        if ("CANCELLING".equals(observedStatus)) {
+            throw new ExecutionConflictException("该执行正在取消中，等它变为已取消后再续跑");
         }
 
         ResumeExecutionRequest resumeRequest = request != null ? request : new ResumeExecutionRequest();
@@ -154,13 +158,14 @@ public class WorkflowEngine implements WorkflowExecutor {
         saveModifiedVariables(executionId, resumeState.modifiedVariables);
 
         long startTime = System.currentTimeMillis();
-        if (eventCallback != null) {
-            eventCallback.accept(ExecutionEvent.workflowStart(record.getId()));
-        }
 
         return executeNodes(record, workflow.getId(), inputData, sortedNodes, indexes, resumeState, startTime, eventCallback);
     }
 
+    /**
+     * 登记取消标记再执行：登记表里有它，取消请求才找得到这次执行。
+     * 注销放在落库之后，这样"登记表里没有"只可能是"已经结束"或者"不在本进程里"。
+     */
     private ExecutionResponse executeNodes(ExecutionRecord record,
                                            Long flowId,
                                            String inputData,
@@ -169,6 +174,30 @@ public class WorkflowEngine implements WorkflowExecutor {
                                            ResumeState resumeState,
                                            long startTime,
                                            Consumer<ExecutionEvent> rawEventCallback) {
+        if (cancellations != null) {
+            cancellations.register(record.getId());
+        }
+        try {
+            // 先登记再对外公布执行编号（WORKFLOW_START 事件）：客户端拿到编号后立刻取消，也一定找得到这次执行
+            if (rawEventCallback != null) {
+                rawEventCallback.accept(ExecutionEvent.workflowStart(record.getId()));
+            }
+            return runNodes(record, flowId, inputData, sortedNodes, indexes, resumeState, startTime, rawEventCallback);
+        } finally {
+            if (cancellations != null) {
+                cancellations.unregister(record.getId());
+            }
+        }
+    }
+
+    private ExecutionResponse runNodes(ExecutionRecord record,
+                                       Long flowId,
+                                       String inputData,
+                                       List<WorkflowNode> sortedNodes,
+                                       EdgeIndexes indexes,
+                                       ResumeState resumeState,
+                                       long startTime,
+                                       Consumer<ExecutionEvent> rawEventCallback) {
         // 并发执行的节点会从不同线程回调事件，而 SseEmitter 不是线程安全的，这里统一串行化
         Consumer<ExecutionEvent> eventCallback = synchronizedCallback(rawEventCallback);
         Map<String, List<WorkflowEdge>> edgesBySource = indexes.bySource();
@@ -213,7 +242,6 @@ public class WorkflowEngine implements WorkflowExecutor {
                 if (runnable.isEmpty()) {
                     continue;
                 }
-
                 // 本层所有节点基于"本层开始时"的上游输出快照取输入，彼此不共享可变状态
                 Map<String, Map<String, Object>> outputsSnapshot = Collections.unmodifiableMap(new HashMap<>(nodeOutputs));
                 Map<String, Object> fallbackSnapshot = Collections.unmodifiableMap(new HashMap<>(currentInput));
@@ -222,10 +250,15 @@ public class WorkflowEngine implements WorkflowExecutor {
 
                 runs.sort(Comparator.comparingInt(run -> sortedIndex.get(run.node.getId())));
                 NodeRun failed = null;
+                boolean cancelledInLevel = false;
                 for (NodeRun run : runs) {
-                    nodeResults.add(run.nodeResult);
+                    if (run.nodeResult != null) {
+                        nodeResults.add(run.nodeResult);
+                    }
                     if (run.error != null) {
-                        if (failed == null) {
+                        if (run.cancelled) {
+                            cancelledInLevel = true;
+                        } else if (failed == null) {
                             failed = run;
                         }
                         continue;
@@ -243,6 +276,12 @@ public class WorkflowEngine implements WorkflowExecutor {
                     // 同层其他节点已经跑完并落了快照（续跑时可直接跳过），后面的层不再启动
                     status = "FAILED";
                     errorMessage = "节点 " + failed.node.getId() + " 执行失败: " + failed.error.getMessage();
+                    break;
+                }
+                if (cancelledInLevel) {
+                    // 真实的失败比"被取消"更有信息量，所以上面的 FAILED 优先；只有没有失败时才是 CANCELLED
+                    status = "CANCELLED";
+                    errorMessage = ExecutionSupport.cancelMessage(nodeResults);
                     break;
                 }
             }
