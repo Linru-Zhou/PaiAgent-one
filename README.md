@@ -38,7 +38,12 @@
 - **视频任务级恢复**：续跑时复用已提交的视频任务，由用户选择继续等待或重新生成
 - **通义千问（百炼）接入**：配音（qwen-audio）、生图、生视频；产物与每次执行结果保存到可见的 `outputs/` 目录；流程图导出 PNG；封面标题由程序渲染（生图模型写字不可靠），并关闭厂商对提示词的改写
 - **Agent 长期记忆**：SQLite 持久化 + 混合检索
-- **测试**：当前后端 201 个、前端 26 个测试用例
+- **ReAct 节点原生函数调用**：工具作为模型服务商的 `tools` 参数发送（默认），旧的"提示词 JSON"保留为 `prompt` 模式，格式不对时明确报错而不是悄悄当作答案
+- **MCP 客户端会话池**：常驻复用 stdio MCP 进程，握手后缓存 `tools/list`，超时/崩溃自动重建，空闲回收
+- **[PaiAgent MCP 服务](mcp-server/README.md)**：把工作流封装成 Agent 可调用的工具（`list_workflows` / `start_workflow` / `get_execution` / `resume_execution` / `cancel_execution`），带结构化错误、`request_id` 防重复提交、工作流白名单
+- **取消执行**：`POST /api/workflows/{id}/executions/{eid}/cancel`，协作式取消（`RUNNING → CANCELLING → CANCELLED`），两个引擎行为一致，已完成的节点保留、可以续跑；调试面板里有“取消执行”按钮
+- **健康检查与容器化**：`/actuator/health`（存活 / 就绪探针，匿名只返回状态）；`docker-compose.yml` 一条命令起 MySQL + Redis + MinIO + 后端 + 前端（见下文“Docker 一键启动”）
+- **测试**：当前后端 248 个、前端 28 个、MCP 服务 57 个测试用例
 
 > 配套教程（下方"项目教程"）由上游作者撰写并发布在技术派，版权归原作者，本仓库不含教程正文，仅保留链接。
 
@@ -534,6 +539,17 @@ npm run dev
 - 后端端口在 [application.yml](/Users/itwanger/Documents/GitHub/PaiAgent-one/backend/src/main/resources/application.yml#L1) 中配置，当前默认值是 `8084`
 - 前端通过 Vite 环境变量 `VITE_API_BASE_URL` 连接后端，默认示例见 [`frontend/.env.example`](/Users/itwanger/Documents/GitHub/PaiAgent-one/frontend/.env.example)
 - 前端不能直接读取 Spring Boot 的 `application.yml`，所以如果后端端口变化，需要同步调整 `frontend/.env.local`
+
+### 🐳 Docker 一键启动
+
+```bash
+cp .env.docker.example .env      # 把标了"必填"的 4 项改掉：数据库密码、JWT 密钥、API Key 加密主密钥、管理员初始密码
+docker compose up -d --build
+```
+
+前端 http://localhost:8080，后端接口文档 http://localhost:8084/swagger-ui.html，健康检查 http://localhost:8084/actuator/health。MySQL / Redis 不发布到宿主机；数据在命名卷里，`docker compose down` 不会丢，`docker compose down -v` 才会清空。必填项没设时 compose 会直接报错并说明是哪一项。
+
+> 说明：`docker-compose.yml` 的语法和必填项检查已验证；**镜像构建与整套启动我当时没能验证**（那台机器的 Docker 拉不到基础镜像）。第一次使用请以实际结果为准，遇到问题欢迎提 issue。
 
 ### 🎬 快速演示
 
