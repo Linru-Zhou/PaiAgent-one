@@ -1,0 +1,29 @@
+{
+  "name": "paiagent-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server that exposes PaiAgent workflows as tools for AI agents (stdio)",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "paiagent-mcp": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "start": "node dist/index.js",
+    "test": "node --test \"tests/*.test.ts\"",
+    "demo": "node scripts/demo-client.ts",
+    "schemas": "node scripts/export-tool-schemas.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "7.0.2"
+  }
+}

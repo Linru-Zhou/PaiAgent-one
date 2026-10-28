@@ -1,0 +1,76 @@
+{"ts":"2026-10-26T18:21:54.106Z","event":"started","base_url":"http://localhost:8084","auth":"username/password","allowed_workflows":[1,9101]}
+服务端提供的工具: list_workflows, start_workflow, get_execution, resume_execution
+
+→ list_workflows {}
+{"ts":"2026-10-26T18:21:54.243Z","tool":"list_workflows","has_keyword":false,"outcome":"ok","ms":119}
+← {
+  "ok": true,
+  "total": 2,
+  "returned": 2,
+  "truncated": false,
+  "workflows": [
+    {
+      "id": 9101,
+      "name": "tmp-echo",
+      "description": "只有输入和输出节点，不调用任何外部服务（MCP 验证用）",
+      "node_count": 2,
+      "input_label": "用户提问"
+    },
+    {
+      "id": 1,
+      "name": "Java面试智能客服",
+      "description": "基于知识库RAG的Java八股问答工作流",
+      "node_count": 3,
+      "input_label": "用户提问"
+    }
+  ]
+}
+
+→ start_workflow {"workflow_id":9101,"input_text":"ConcurrentHashMap 的 size 为什么不精确","request_id":"demo-1793038914246"}
+{"ts":"2026-10-26T18:21:54.264Z","tool":"start_workflow","workflow_id":9101,"input_chars":31,"has_request_id":true,"outcome":"ok","ms":17,"execution_id":1325}
+← {
+  "ok": true,
+  "workflow_id": 9101,
+  "execution_id": 1325,
+  "status": "RUNNING",
+  "next_step": "每隔 3~5 秒调用 get_execution（带上 workflow_id 和 execution_id），直到 done 为 true。",
+  "retry_after_seconds": 4
+}
+
+→ get_execution {"workflow_id":9101,"execution_id":1325}
+{"ts":"2026-10-26T18:21:54.284Z","tool":"get_execution","workflow_id":9101,"execution_id":1325,"detail":"summary","outcome":"ok","ms":18}
+← {
+  "ok": true,
+  "workflow_id": 9101,
+  "execution_id": 1325,
+  "status": "RUNNING",
+  "done": false,
+  "duration_ms": 0,
+  "progress": {
+    "nodes_seen": 2,
+    "succeeded": 2,
+    "running": 0,
+    "failed": 0
+  },
+  "next_step": "仍在运行。4 秒后再调用 get_execution 查看；不要再次调用 start_workflow（会重复执行并重复计费）。",
+  "retry_after_seconds": 4
+}
+
+→ get_execution {"workflow_id":9101,"execution_id":1325}
+{"ts":"2026-10-26T18:21:58.310Z","tool":"get_execution","workflow_id":9101,"execution_id":1325,"detail":"summary","outcome":"ok","ms":23}
+← {
+  "ok": true,
+  "workflow_id": 9101,
+  "execution_id": 1325,
+  "status": "SUCCESS",
+  "done": true,
+  "duration_ms": 20,
+  "progress": {
+    "nodes_seen": 2,
+    "succeeded": 2,
+    "running": 0,
+    "failed": 0
+  },
+  "output": "{\"output\": \"ConcurrentHashMap 的 size 为什么不精确\"}",
+  "next_step": "已完成。把 output 交给用户；如有 artifacts 链接（图片/音频/视频），原样转给用户，不要改写。"
+}

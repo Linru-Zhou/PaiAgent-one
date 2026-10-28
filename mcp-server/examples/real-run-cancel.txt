@@ -1,0 +1,115 @@
+{"ts":"2026-10-27T09:46:13.483Z","event":"started","base_url":"http://localhost:8084","auth":"username/password","allowed_workflows":[9203]}
+服务端提供的工具: list_workflows, start_workflow, get_execution, resume_execution, cancel_execution
+
+→ list_workflows {}
+{"ts":"2026-10-27T09:46:13.570Z","tool":"list_workflows","has_keyword":false,"outcome":"ok","ms":66}
+← {
+  "ok": true,
+  "total": 1,
+  "returned": 1,
+  "truncated": false,
+  "workflows": [
+    {
+      "id": 9203,
+      "name": "tmp-slow-llm",
+      "description": "临时验证用",
+      "node_count": 3,
+      "input_label": "用户提问"
+    }
+  ]
+}
+
+→ start_workflow {"workflow_id":9203,"input_text":"取消演示：这个工作流的模型要 60 秒才回答","request_id":"demo-1793094373573"}
+{"ts":"2026-10-27T09:46:13.584Z","tool":"start_workflow","workflow_id":9203,"input_chars":22,"has_request_id":true,"outcome":"ok","ms":10,"execution_id":1888}
+← {
+  "ok": true,
+  "workflow_id": 9203,
+  "execution_id": 1888,
+  "status": "RUNNING",
+  "next_step": "每隔 3~5 秒调用 get_execution（带上 workflow_id 和 execution_id），直到 done 为 true。",
+  "retry_after_seconds": 4
+}
+
+→ get_execution {"workflow_id":9203,"execution_id":1888}
+{"ts":"2026-10-27T09:46:15.600Z","tool":"get_execution","workflow_id":9203,"execution_id":1888,"detail":"summary","outcome":"ok","ms":11}
+← {
+  "ok": true,
+  "workflow_id": 9203,
+  "execution_id": 1888,
+  "status": "RUNNING",
+  "done": false,
+  "duration_ms": 0,
+  "progress": {
+    "nodes_seen": 2,
+    "succeeded": 1,
+    "running": 1,
+    "failed": 0,
+    "cancelled": 0
+  },
+  "next_step": "仍在运行。4 秒后再调用 get_execution 查看；不要再次调用 start_workflow（会重复执行并重复计费）。",
+  "retry_after_seconds": 4
+}
+
+→ cancel_execution {"workflow_id":9203,"execution_id":1888}
+{"ts":"2026-10-27T09:46:15.607Z","tool":"cancel_execution","workflow_id":9203,"execution_id":1888,"outcome":"ok","ms":6}
+← {
+  "ok": true,
+  "workflow_id": 9203,
+  "execution_id": 1888,
+  "status": "CANCELLING",
+  "done": false,
+  "message": "已受理取消，正在中断运行中的节点；用 get_execution 查看最终状态",
+  "next_step": "已受理取消，节点正在退出。4 秒后调用 get_execution 查看，直到 status 变成 CANCELLED；不需要再次取消。",
+  "retry_after_seconds": 4
+}
+
+→ get_execution {"workflow_id":9203,"execution_id":1888}
+{"ts":"2026-10-27T09:46:15.612Z","tool":"get_execution","workflow_id":9203,"execution_id":1888,"detail":"summary","outcome":"ok","ms":4}
+← {
+  "ok": true,
+  "workflow_id": 9203,
+  "execution_id": 1888,
+  "status": "CANCELLING",
+  "done": false,
+  "duration_ms": 0,
+  "progress": {
+    "nodes_seen": 2,
+    "succeeded": 1,
+    "running": 0,
+    "failed": 0,
+    "cancelled": 1
+  },
+  "next_step": "正在取消：已受理，运行中的节点正在退出。4 秒后再调用 get_execution，直到 status 变成 CANCELLED；不需要再次取消。",
+  "retry_after_seconds": 4
+}
+
+→ get_execution {"workflow_id":9203,"execution_id":1888}
+{"ts":"2026-10-27T09:46:19.623Z","tool":"get_execution","workflow_id":9203,"execution_id":1888,"detail":"summary","outcome":"ok","ms":8}
+← {
+  "ok": true,
+  "workflow_id": 9203,
+  "execution_id": 1888,
+  "status": "CANCELLED",
+  "done": true,
+  "duration_ms": 2029,
+  "progress": {
+    "nodes_seen": 2,
+    "succeeded": 1,
+    "running": 0,
+    "failed": 0,
+    "cancelled": 1
+  },
+  "next_step": "已取消。取消前已完成的节点结果保留；如果用户之后想继续，调用 resume_execution 只会重跑没完成的节点；想从头来过就用 start_workflow。"
+}
+
+→ cancel_execution {"workflow_id":9203,"execution_id":1888}
+{"ts":"2026-10-27T09:46:19.633Z","tool":"cancel_execution","workflow_id":9203,"execution_id":1888,"outcome":"ok","ms":9}
+← {
+  "ok": true,
+  "workflow_id": 9203,
+  "execution_id": 1888,
+  "status": "CANCELLED",
+  "done": true,
+  "message": "这次执行已经是取消状态",
+  "next_step": "已取消。取消前已完成的节点结果保留；用户之后想继续可以调用 resume_execution。"
+}

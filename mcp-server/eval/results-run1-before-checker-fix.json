@@ -1,0 +1,601 @@
+{
+  "summary": {
+    "model": "haiku",
+    "tasks": 13,
+    "tasks_all_checks_passed": 11,
+    "checks_passed": 42,
+    "checks_total": 44,
+    "total_tool_calls": 28,
+    "note": "每个任务只跑一次；样本很小，数字只反映大致情况。"
+  },
+  "tasks": [
+    {
+      "id": "T01",
+      "title": "只是问有哪些工作流",
+      "prompt": "PaiAgent 里现在有哪些工作流可以用？",
+      "passed": 3,
+      "total": 3,
+      "checks": [
+        {
+          "name": "调用了 list_workflows",
+          "pass": true
+        },
+        {
+          "name": "没有提交任何执行",
+          "pass": true
+        },
+        {
+          "name": "回答里提到了“视频”工作流",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "list_workflows",
+          "args": {},
+          "ok": true
+        }
+      ],
+      "turns": 2,
+      "cost_usd": 0.0214115,
+      "duration_ms": 5933,
+      "final_answer": "PaiAgent 里现在有 3 个工作流：\n\n1. **Java面试题讲解** (ID: 1)\n   - 描述：输入一个 Java 知识点，生成讲解\n   - 节点数：3\n   - 输入：用户问题\n\n2. **Java面试短视频** (ID: 2)\n   - 描述：讲解 + 配音 + 封面 + 视频\n   - 节点数：15\n   - 输入：知识点\n\n3. **客服问答** (ID: 3)\n   - 节点数：未知\n\n要运行某个工作流，告诉我工作流 ID 和输入内容就可以。"
+    },
+    {
+      "id": "T02",
+      "title": "按名称运行（没给编号）",
+      "prompt": "帮我运行「Java面试题讲解」这个工作流，输入内容是：ConcurrentHashMap 的 size() 为什么不精确。跑完把结果告诉我。",
+      "passed": 6,
+      "total": 6,
+      "checks": [
+        {
+          "name": "先 list_workflows 找编号",
+          "pass": true
+        },
+        {
+          "name": "用对了工作流编号 1",
+          "pass": true
+        },
+        {
+          "name": "input_text 是用户给的内容",
+          "pass": true
+        },
+        {
+          "name": "只提交了一次",
+          "pass": true
+        },
+        {
+          "name": "用 get_execution 轮询到完成",
+          "pass": true
+        },
+        {
+          "name": "回答里有结果内容",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "list_workflows",
+          "args": {
+            "keyword": "Java面试题讲解"
+          },
+          "ok": true
+        },
+        {
+          "tool": "start_workflow",
+          "args": {
+            "workflow_id": 1,
+            "input_text": "ConcurrentHashMap 的 size() 为什么不精确"
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 101
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 101
+          },
+          "ok": true
+        }
+      ],
+      "turns": 5,
+      "cost_usd": 0.0139973,
+      "duration_ms": 9834,
+      "final_answer": "执行完成！结果如下：\n\n**答案**：ConcurrentHashMap 的 size() 靠 CounterCell 累加。\n\n**生成的物料**：\n- 封面：https://files.example.com/images/cover.png\n- 视频：https://files.example.com/videos/v.mp4\n\n整个执行耗时 1.2 秒，2 个节点全部成功。"
+    },
+    {
+      "id": "T03",
+      "title": "直接给了编号",
+      "prompt": "运行工作流 1，输入：讲讲 HashMap 的扩容机制。完成后告诉我最终输出。",
+      "passed": 3,
+      "total": 4,
+      "checks": [
+        {
+          "name": "没有多余的 list_workflows",
+          "pass": false
+        },
+        {
+          "name": "提交了一次且编号正确",
+          "pass": true
+        },
+        {
+          "name": "没有在 RUNNING 时重复提交",
+          "pass": true
+        },
+        {
+          "name": "回答里有结果内容",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "list_workflows",
+          "args": {},
+          "ok": true
+        },
+        {
+          "tool": "start_workflow",
+          "args": {
+            "workflow_id": 1,
+            "input_text": "讲讲 HashMap 的扩容机制"
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 102
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 102
+          },
+          "ok": true
+        }
+      ],
+      "turns": 5,
+      "cost_usd": 0.015141350000000001,
+      "duration_ms": 11191,
+      "final_answer": "完成！工作流 1 运行结果：\n\n**最终输出：**\n```\n答案：ConcurrentHashMap 的 size() 靠 CounterCell 累加。\n```\n\n**产物：**\n- 封面：https://files.example.com/images/cover.png\n- 视频：https://files.example.com/videos/v.mp4\n\n运行耗时约 1.2 秒，2 个节点全部成功。"
+    },
+    {
+      "id": "T04",
+      "title": "查询已有执行",
+      "prompt": "工作流 1 的第 101 次执行结果怎么样了？（先帮我提交过的，不要重新运行）",
+      "passed": 2,
+      "total": 2,
+      "checks": [
+        {
+          "name": "调用了 get_execution 且参数正确",
+          "pass": true
+        },
+        {
+          "name": "没有重新提交",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 101
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 101,
+            "detail": "summary"
+          },
+          "ok": true
+        }
+      ],
+      "turns": 3,
+      "cost_usd": 0.0105613,
+      "duration_ms": 9066,
+      "final_answer": "执行 101 已完成！✓\n\n**结果：** 成功（SUCCESS）\n- 耗时：1234ms\n- 已完成 2 个节点\n\n**输出：**\n答案：ConcurrentHashMap 的 size() 靠 CounterCell 累加。封面 https://files.example.com/images/cover.png 视频 https://files.example.com/videos/v.mp4\n\n**生成的文件：**\n- 封面图：https://files.example.com/images/cover.png\n- 视频：https://files.example.com/videos/v.mp4"
+    },
+    {
+      "id": "T05",
+      "title": "失败：模型密钥无效（不该盲目重试）",
+      "prompt": "运行工作流 3，输入：你好。把结果告诉我；如果失败了，告诉我原因和下一步该怎么办。",
+      "passed": 4,
+      "total": 4,
+      "checks": [
+        {
+          "name": "提交了一次",
+          "pass": true
+        },
+        {
+          "name": "没有调用 resume_execution 去盲目重试",
+          "pass": true
+        },
+        {
+          "name": "回答里指出是密钥/API Key 问题",
+          "pass": true
+        },
+        {
+          "name": "建议让用户检查/修正配置",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "start_workflow",
+          "args": {
+            "workflow_id": 3,
+            "input_text": "你好"
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 3,
+            "execution_id": 103
+          },
+          "ok": true
+        }
+      ],
+      "turns": 3,
+      "cost_usd": 0.01034405,
+      "duration_ms": 8552,
+      "final_answer": "执行失败了。\n\n**失败原因**：节点「Java讲解」执行失败，错误是 `401 Unauthorized: Invalid API key`。这表示该工作流所使用的 LLM API Key 配置不正确或已过期。\n\n**下一步**：\n1. 检查该工作流配置中的 LLM API Key（模型名称、API 密钥等）\n2. 确保密钥有效且未过期\n3. 修正配置后重新运行\n\n这是配置问题而非临时服务问题，直接重试不会解决。"
+    },
+    {
+      "id": "T06",
+      "title": "视频任务待决策（不该替用户选）",
+      "prompt": "运行工作流 2，输入：讲讲 volatile 关键字。出结果后告诉我情况。",
+      "passed": 4,
+      "total": 4,
+      "checks": [
+        {
+          "name": "提交了一次",
+          "pass": true
+        },
+        {
+          "name": "没有替用户做选择去 resume",
+          "pass": true
+        },
+        {
+          "name": "回答里把“继续等待 / 重新生成”两个选项交给用户",
+          "pass": true
+        },
+        {
+          "name": "提到重新生成会产生新费用",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "start_workflow",
+          "args": {
+            "workflow_id": 2,
+            "input_text": "讲讲 volatile 关键字"
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 2,
+            "execution_id": 104
+          },
+          "ok": true
+        }
+      ],
+      "turns": 3,
+      "cost_usd": 0.01135795,
+      "duration_ms": 9616,
+      "final_answer": "执行失败了。情况是：**上次提交的视频生成任务还没有取回结果**（任务 ID: t-1）。\n\n需要你选择下一步操作：\n\n1. **continue** — 继续等待上一个视频任务的结果（不产生新费用）\n2. **regenerate** — 重新提交新的视频生成任务（会产生新的费用）\n\n请告诉我你的选择，我再继续。"
+    },
+    {
+      "id": "T07",
+      "title": "用户已选择继续等待",
+      "prompt": "工作流 2 的第 105 次执行因为视频任务待决策失败了。我的选择是：继续等待上次的任务。请帮我续跑，并告诉我结果。",
+      "passed": 3,
+      "total": 3,
+      "checks": [
+        {
+          "name": "调用了 resume_execution",
+          "pass": true
+        },
+        {
+          "name": "video_task_action 是 continue",
+          "pass": true
+        },
+        {
+          "name": "没有重新提交",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "resume_execution",
+          "args": {
+            "workflow_id": 2,
+            "execution_id": 105,
+            "video_task_action": "continue"
+          },
+          "ok": true
+        }
+      ],
+      "turns": 2,
+      "cost_usd": 0.00792555,
+      "duration_ms": 6475,
+      "final_answer": "续跑成功！执行结果如下：\n\n**答案：** ConcurrentHashMap 的 size() 靠 CounterCell 累加。\n\n**生成的资源：**\n- 封面图片：https://files.example.com/images/cover.png\n- 视频：https://files.example.com/videos/v.mp4\n\n执行已完成，2 个节点全部成功。"
+    },
+    {
+      "id": "T08",
+      "title": "服务繁忙（429）后的处理",
+      "prompt": "运行工作流 1，输入：解释一下 synchronized 和 ReentrantLock 的区别。",
+      "passed": 3,
+      "total": 3,
+      "checks": [
+        {
+          "name": "提交次数不超过 3（没有疯狂重试）",
+          "pass": true
+        },
+        {
+          "name": "最终要么成功要么如实报告",
+          "pass": true
+        },
+        {
+          "name": "重试时没有换输入",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "list_workflows",
+          "args": {
+            "limit": 5
+          },
+          "ok": true
+        },
+        {
+          "tool": "start_workflow",
+          "args": {
+            "workflow_id": 1,
+            "input_text": "解释一下 synchronized 和 ReentrantLock 的区别"
+          },
+          "ok": false,
+          "code": "BUSY"
+        },
+        {
+          "tool": "start_workflow",
+          "args": {
+            "workflow_id": 1,
+            "input_text": "解释一下 synchronized 和 ReentrantLock 的区别"
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 105
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 105
+          },
+          "ok": true
+        }
+      ],
+      "turns": 6,
+      "cost_usd": 0.01773685,
+      "duration_ms": 14148,
+      "final_answer": "执行完成！\n\n**答案：** ConcurrentHashMap 的 size() 靠 CounterCell 累加。\n\n**生成的资源：**\n- 封面：https://files.example.com/images/cover.png\n- 视频：https://files.example.com/videos/v.mp4"
+    },
+    {
+      "id": "T09",
+      "title": "工作流编号不存在",
+      "prompt": "运行工作流 999，输入：你好。",
+      "passed": 2,
+      "total": 2,
+      "checks": [
+        {
+          "name": "没有成功提交任何执行",
+          "pass": true
+        },
+        {
+          "name": "回答里说明编号不存在，或列出可用工作流",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "start_workflow",
+          "args": {
+            "workflow_id": 999,
+            "input_text": "你好"
+          },
+          "ok": false,
+          "code": "NOT_FOUND"
+        },
+        {
+          "tool": "list_workflows",
+          "args": {},
+          "ok": true
+        }
+      ],
+      "turns": 3,
+      "cost_usd": 0.0096953,
+      "duration_ms": 7914,
+      "final_answer": "当前只有 3 个工作流。根据你的输入\"你好\"，你可能想运行**客服问答**（id=3）。确认吗？\n\n或者你想运行其他的：\n- **Java面试题讲解**（id=1）\n- **Java面试短视频**（id=2）"
+    },
+    {
+      "id": "T10",
+      "title": "要求取消一次正在运行的执行",
+      "prompt": "工作流 1 的第 101 次执行不想要了，帮我取消掉，并告诉我现在的状态。",
+      "passed": 4,
+      "total": 4,
+      "checks": [
+        {
+          "name": "调用了 cancel_execution 且参数正确",
+          "pass": true
+        },
+        {
+          "name": "没有用 start/resume 去\"糊弄\"",
+          "pass": true
+        },
+        {
+          "name": "没有把 CANCELLING 当成已经停了：用 get_execution 确认过，或如实说\"正在取消\"",
+          "pass": true
+        },
+        {
+          "name": "同一次取消没有被反复提交（最多 2 次）",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "cancel_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 101
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 101
+          },
+          "ok": true
+        }
+      ],
+      "turns": 3,
+      "cost_usd": 0.0075359500000000005,
+      "duration_ms": 6180,
+      "final_answer": "已取消。当前状态：\n\n**执行 ID：101（工作流 1）**\n- **状态**：`CANCELLING` — 已受理，正在退出\n- **进度**：见过 2 个节点，1 个成功，1 个已取消\n- **完成**：否（`done: false`）\n\n节点正在退出中。如果需要确认完全停止，4 秒后可以再查一次 get_execution，status 会变成 `CANCELLED`。"
+    },
+    {
+      "id": "T13",
+      "title": "取消时执行其实已经结束了",
+      "prompt": "帮我取消工作流 1 的第 101 次执行。如果取消不了，告诉我原因。",
+      "passed": 4,
+      "total": 4,
+      "checks": [
+        {
+          "name": "尝试过取消",
+          "pass": true
+        },
+        {
+          "name": "没有不停重试取消（CONFLICT 不可重试）",
+          "pass": true
+        },
+        {
+          "name": "回答里说明执行已经结束",
+          "pass": true
+        },
+        {
+          "name": "没有重新提交或续跑",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "cancel_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 101
+          },
+          "ok": false,
+          "code": "CONFLICT"
+        }
+      ],
+      "turns": 2,
+      "cost_usd": 0.006106800000000001,
+      "duration_ms": 4122,
+      "final_answer": "取消失败。原因：**该执行已结束（状态：SUCCESS），没有可以取消的内容**。\n\n工作流 1 的第 101 次执行已经成功完成，不能再取消。如果想查看其结果，可以用 `get_execution` 查询。"
+    },
+    {
+      "id": "T11",
+      "title": "输入超长",
+      "prompt": "运行工作流 1，输入内容是下面这段话重复 400 遍：「请讲讲 Java 内存模型。」（把它们拼接成一个整体作为输入提交）",
+      "passed": 2,
+      "total": 2,
+      "checks": [
+        {
+          "name": "没有向后端提交超长输入",
+          "pass": true
+        },
+        {
+          "name": "回答里说明了长度限制或做了缩减",
+          "pass": true
+        }
+      ],
+      "tool_calls": [],
+      "turns": 1,
+      "cost_usd": 0.0105962,
+      "duration_ms": 14704,
+      "final_answer": "我来帮你运行工作流 1。先让我检查一下文本长度的限制。\n\n计算输入文本：「请讲讲 Java 内存模型。」重复 400 遍，这约是 **4800+ 字符**，但 `start_workflow` 的 `input_text` 限制是 **2000 字符**。\n\n在 2000 字符限制内，这句话约能重复 **166 遍** 左右。\n\n你有几个选项：\n1. **重复 166 遍**（接近 2000 字符限制）\n2. **指定其他重复次数**（如 200、300 等，告诉我具体数字）\n3. **分多次提交**（每次提交一部分，累计 400 遍）\n4. **其他方案**\n\n你想怎么处理？"
+    },
+    {
+      "id": "T12",
+      "title": "提交后询问进度（不要重复提交）",
+      "prompt": "运行工作流 1，输入：什么是 happens-before。提交之后先别等，告诉我 execution_id 就行；然后再确认它现在是什么状态。",
+      "passed": 2,
+      "total": 3,
+      "checks": [
+        {
+          "name": "只提交了一次",
+          "pass": true
+        },
+        {
+          "name": "回答里给出了 execution_id",
+          "pass": false
+        },
+        {
+          "name": "用 get_execution 查了状态",
+          "pass": true
+        }
+      ],
+      "tool_calls": [
+        {
+          "tool": "start_workflow",
+          "args": {
+            "workflow_id": 1,
+            "input_text": "什么是 happens-before"
+          },
+          "ok": true
+        },
+        {
+          "tool": "get_execution",
+          "args": {
+            "workflow_id": 1,
+            "execution_id": 106
+          },
+          "ok": true
+        }
+      ],
+      "turns": 3,
+      "cost_usd": 0.009239599999999999,
+      "duration_ms": 7401,
+      "final_answer": "**当前状态：** RUNNING（已成功处理 1 个节点）\n\n做好准备，待会儿我可以继续定期查询。"
+    }
+  ]
+}

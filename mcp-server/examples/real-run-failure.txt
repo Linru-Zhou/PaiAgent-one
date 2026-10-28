@@ -1,0 +1,145 @@
+{"ts":"2026-10-26T18:22:15.832Z","event":"started","base_url":"http://localhost:8084","auth":"username/password","allowed_workflows":[1,9101]}
+服务端提供的工具: list_workflows, start_workflow, get_execution, resume_execution
+
+→ list_workflows {}
+{"ts":"2026-10-26T18:22:15.917Z","tool":"list_workflows","has_keyword":false,"outcome":"ok","ms":67}
+← {
+  "ok": true,
+  "total": 2,
+  "returned": 2,
+  "truncated": false,
+  "workflows": [
+    {
+      "id": 9101,
+      "name": "tmp-echo",
+      "description": "只有输入和输出节点，不调用任何外部服务（MCP 验证用）",
+      "node_count": 2,
+      "input_label": "用户提问"
+    },
+    {
+      "id": 1,
+      "name": "Java面试智能客服",
+      "description": "基于知识库RAG的Java八股问答工作流",
+      "node_count": 3,
+      "input_label": "用户提问"
+    }
+  ]
+}
+
+→ start_workflow {"workflow_id":1,"input_text":"ConcurrentHashMap 的 size 为什么不精确","request_id":"demo-1793038935920"}
+{"ts":"2026-10-26T18:22:15.935Z","tool":"start_workflow","workflow_id":1,"input_chars":31,"has_request_id":true,"outcome":"ok","ms":14,"execution_id":1326}
+← {
+  "ok": true,
+  "workflow_id": 1,
+  "execution_id": 1326,
+  "status": "RUNNING",
+  "next_step": "每隔 3~5 秒调用 get_execution（带上 workflow_id 和 execution_id），直到 done 为 true。",
+  "retry_after_seconds": 4
+}
+
+→ get_execution {"workflow_id":1,"execution_id":1326}
+{"ts":"2026-10-26T18:22:15.945Z","tool":"get_execution","workflow_id":1,"execution_id":1326,"detail":"summary","outcome":"ok","ms":9}
+← {
+  "ok": true,
+  "workflow_id": 1,
+  "execution_id": 1326,
+  "status": "RUNNING",
+  "done": false,
+  "duration_ms": 0,
+  "progress": {
+    "nodes_seen": 1,
+    "succeeded": 1,
+    "running": 0,
+    "failed": 0
+  },
+  "next_step": "仍在运行。4 秒后再调用 get_execution 查看；不要再次调用 start_workflow（会重复执行并重复计费）。",
+  "retry_after_seconds": 4
+}
+
+→ get_execution {"workflow_id":1,"execution_id":1326}
+{"ts":"2026-10-26T18:22:19.962Z","tool":"get_execution","workflow_id":1,"execution_id":1326,"detail":"summary","outcome":"ok","ms":12}
+← {
+  "ok": true,
+  "workflow_id": 1,
+  "execution_id": 1326,
+  "status": "FAILED",
+  "done": true,
+  "duration_ms": 3086,
+  "progress": {
+    "nodes_seen": 2,
+    "succeeded": 1,
+    "running": 0,
+    "failed": 1
+  },
+  "failed_node": {
+    "node_id": "llm-1",
+    "name": "Java面试客服",
+    "error": "I/O error on POST request for \"https://api.deepseek.com/v1/chat/completions\": Remote host terminated the handshake"
+  },
+  "error": "节点 llm-1 执行失败: I/O error on POST request for \"https://api.deepseek.com/v1/chat/completions\": Remote host terminated the handshake",
+  "next_step": "执行失败（节点: Java面试客服）。如果错误指向参数、模型名或密钥（例如 4xx、API Key 无效），先告诉用户去修正配置，不要盲目重试；如果是超时或服务繁忙，可以调用 resume_execution，只会重跑失败的节点，已成功的节点复用结果。"
+}
+
+→ get_execution {"workflow_id":1,"execution_id":1326,"detail":"nodes"}
+{"ts":"2026-10-26T18:22:19.974Z","tool":"get_execution","workflow_id":1,"execution_id":1326,"detail":"nodes","outcome":"ok","ms":9}
+← {
+  "ok": true,
+  "workflow_id": 1,
+  "execution_id": 1326,
+  "status": "FAILED",
+  "done": true,
+  "duration_ms": 3086,
+  "progress": {
+    "nodes_seen": 2,
+    "succeeded": 1,
+    "running": 0,
+    "failed": 1
+  },
+  "failed_node": {
+    "node_id": "llm-1",
+    "name": "Java面试客服",
+    "error": "I/O error on POST request for \"https://api.deepseek.com/v1/chat/completions\": Remote host terminated the handshake"
+  },
+  "error": "节点 llm-1 执行失败: I/O error on POST request for \"https://api.deepseek.com/v1/chat/completions\": Remote host terminated the handshake",
+  "nodes": [
+    {
+      "node_id": "input-1",
+      "name": "用户提问",
+      "status": "SUCCESS",
+      "duration_ms": 9,
+      "output_preview": "{\"input\":\"ConcurrentHashMap 的 size 为什么不精确\"}"
+    },
+    {
+      "node_id": "llm-1",
+      "name": "Java面试客服",
+      "status": "FAILED",
+      "duration_ms": 3071,
+      "error": "I/O error on POST request for \"https://api.deepseek.com/v1/chat/completions\": Remote host terminated the handshake"
+    }
+  ],
+  "next_step": "执行失败（节点: Java面试客服）。如果错误指向参数、模型名或密钥（例如 4xx、API Key 无效），先告诉用户去修正配置，不要盲目重试；如果是超时或服务繁忙，可以调用 resume_execution，只会重跑失败的节点，已成功的节点复用结果。"
+}
+
+→ resume_execution {"workflow_id":1,"execution_id":1326}
+{"ts":"2026-10-26T18:22:23.071Z","tool":"resume_execution","workflow_id":1,"execution_id":1326,"outcome":"ok","ms":3095}
+← {
+  "ok": true,
+  "workflow_id": 1,
+  "execution_id": 1326,
+  "status": "FAILED",
+  "done": true,
+  "duration_ms": 3071,
+  "progress": {
+    "nodes_seen": 2,
+    "succeeded": 1,
+    "running": 0,
+    "failed": 1
+  },
+  "failed_node": {
+    "node_id": "llm-1",
+    "name": "Java面试客服",
+    "error": "I/O error on POST request for \"https://api.deepseek.com/v1/chat/completions\": Remote host terminated the handshake"
+  },
+  "error": "节点 llm-1 执行失败: I/O error on POST request for \"https://api.deepseek.com/v1/chat/completions\": Remote host terminated the handshake",
+  "next_step": "执行失败（节点: Java面试客服）。如果错误指向参数、模型名或密钥（例如 4xx、API Key 无效），先告诉用户去修正配置，不要盲目重试；如果是超时或服务繁忙，可以调用 resume_execution，只会重跑失败的节点，已成功的节点复用结果。"
+}
