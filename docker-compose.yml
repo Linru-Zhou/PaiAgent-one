@@ -1,0 +1,100 @@
+# 一条命令起整套服务：MySQL + Redis + MinIO + 后端 + 前端。
+#
+#   cp .env.docker.example .env      # 然后把 .env 里标了"必填"的值改掉
+#   docker compose up -d --build
+#   打开 http://localhost:8080（前端）；http://localhost:8084/swagger-ui.html（接口文档）
+#
+# 只发布前端、后端和 MinIO 的端口。MySQL / Redis 不发布到宿主机，避免和本机已有的服务抢端口，也少暴露一个入口。
+# 数据放在命名卷里：docker compose down 不会丢，docker compose down -v 才会清空。
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 里设置 MYSQL_PASSWORD}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 首次启动时建库建表（schema.sql 自带 CREATE DATABASE）；以后启动不会重复执行
+      - ./backend/src/main/resources/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      # 产物（音频 / 图片 / 视频）的链接由浏览器直接向 MinIO 取，所以这个端口要发布，并且 MINIO_PUBLIC_URL 要写浏览器能访问的地址
+      - "${MINIO_PORT:-9000}:9000"
+    volumes:
+      - minio-data:/data
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      SERVER_PORT: 8084
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: paiagent
+      MYSQL_USERNAME: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 里设置 MYSQL_PASSWORD}
+      REDIS_HOST: redis
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
+      # 下面三个没有安全的默认值，必须自己设：JWT 签名密钥、API Key 加密主密钥、管理员初始密码
+      JWT_SECRET: ${JWT_SECRET:?请在 .env 里设置 JWT_SECRET（32 位以上随机字符串）}
+      PAIAGENT_ENCRYPTION_KEY: ${PAIAGENT_ENCRYPTION_KEY:?请在 .env 里设置 PAIAGENT_ENCRYPTION_KEY（丢了它，已保存的 API Key 就解不开了）}
+      APP_AUTH_DEFAULT_USERNAME: ${APP_AUTH_DEFAULT_USERNAME:-admin}
+      APP_AUTH_DEFAULT_PASSWORD: ${APP_AUTH_DEFAULT_PASSWORD:?请在 .env 里设置 APP_AUTH_DEFAULT_PASSWORD}
+    ports:
+      - "${BACKEND_PORT:-8084}:8084"
+    volumes:
+      - backend-data:/app/data
+      - backend-outputs:/app/outputs
+    # 健康检查写在 backend/Dockerfile 里（就绪探针）
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:
+  backend-data:
+  backend-outputs:

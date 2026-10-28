@@ -127,3 +127,26 @@ paiagent:
     # 所以每个产物上传的同时再存一份到这里。相对路径以后端的启动目录（backend/）为基准，默认是仓库根目录下的 outputs/。
     # 留空则关闭。
     dir: ${PAIAGENT_OUTPUT_DIR:../outputs}
+
+# 健康检查（Spring Boot Actuator）。只暴露 health：不暴露 env、beans、heapdump 等会泄露配置的端点。
+# - /actuator/health            整体状态（数据库、Redis、磁盘、执行线程池）
+# - /actuator/health/liveness   进程是否还活着：失败就该重启它
+# - /actuator/health/readiness  能不能接流量：数据库连不上、执行队列已满时为 DOWN / OUT_OF_SERVICE，负载均衡应暂时不再转发
+# 匿名访问只返回状态，不返回细节（连接串、磁盘路径之类）。
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db,executionPool
+  health:
+    # Redis 只用来存登录令牌：它挂了影响登录，但不影响正在跑的工作流，所以只体现在整体状态里，不拖垮就绪探针
+    redis:
+      enabled: true

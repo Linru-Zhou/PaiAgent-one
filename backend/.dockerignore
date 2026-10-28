@@ -1,0 +1,10 @@
+target/
+data/
+*.db
+.env
+.env.*
+.idea/
+.vscode/
+.mvn/wrapper/maven-wrapper.jar
+HELP.md
+logs/
