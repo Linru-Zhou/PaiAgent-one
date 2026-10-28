@@ -49,7 +49,7 @@ class LlmResilienceTest {
     @Test
     void hungProvider_failsFastByReadTimeout_andIsNotRetried() throws Exception {
         try (FakeOpenAiServer server = new FakeOpenAiServer().delayMs(5000)) {
-            ChatClientFactory factory = factory(new LlmCallPolicy(2000, 800, 3, 50, 200), LlmConcurrencyLimiter.defaults());
+            ChatClientFactory factory = factory(new LlmCallPolicy(2000, 800, 3, 50, 200, "", 0), LlmConcurrencyLimiter.defaults());
 
             long start = System.nanoTime();
             assertThrows(RuntimeException.class, () -> ask(factory, "deepseek", server.baseUrl()));
@@ -65,7 +65,7 @@ class LlmResilienceTest {
     @Test
     void transientFailures_areRetriedWithBoundedBackoff() throws Exception {
         try (FakeOpenAiServer server = new FakeOpenAiServer().failFirst(2, 503)) {
-            ChatClientFactory factory = factory(new LlmCallPolicy(2000, 5000, 3, 100, 400), LlmConcurrencyLimiter.defaults());
+            ChatClientFactory factory = factory(new LlmCallPolicy(2000, 5000, 3, 100, 400, "", 0), LlmConcurrencyLimiter.defaults());
 
             long start = System.nanoTime();
             String content = ask(factory, "deepseek", server.baseUrl());
@@ -82,7 +82,7 @@ class LlmResilienceTest {
     @Test
     void persistentFailure_stopsAfterMaxAttempts() throws Exception {
         try (FakeOpenAiServer server = new FakeOpenAiServer().failFirst(1000, 503)) {
-            ChatClientFactory factory = factory(new LlmCallPolicy(2000, 5000, 3, 50, 100), LlmConcurrencyLimiter.defaults());
+            ChatClientFactory factory = factory(new LlmCallPolicy(2000, 5000, 3, 50, 100, "", 0), LlmConcurrencyLimiter.defaults());
 
             assertThrows(RuntimeException.class, () -> ask(factory, "deepseek", server.baseUrl()));
 
@@ -94,7 +94,7 @@ class LlmResilienceTest {
     @Test
     void clientErrors_areNotRetried() throws Exception {
         try (FakeOpenAiServer server = new FakeOpenAiServer().failFirst(1000, 400)) {
-            ChatClientFactory factory = factory(new LlmCallPolicy(2000, 5000, 3, 50, 100), LlmConcurrencyLimiter.defaults());
+            ChatClientFactory factory = factory(new LlmCallPolicy(2000, 5000, 3, 50, 100, "", 0), LlmConcurrencyLimiter.defaults());
 
             assertThrows(RuntimeException.class, () -> ask(factory, "deepseek", server.baseUrl()));
             assertEquals(1, server.requests(), "4xx 是请求本身的问题（如 Key 无效），重试没有意义");

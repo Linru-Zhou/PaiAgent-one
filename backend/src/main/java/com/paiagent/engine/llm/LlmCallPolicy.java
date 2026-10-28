@@ -13,6 +13,8 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.SocketTimeoutException;
 import java.net.http.HttpClient.Version;
 import java.net.http.HttpTimeoutException;
@@ -34,27 +36,40 @@ public class LlmCallPolicy {
     private final int maxAttempts;
     private final long initialBackoffMs;
     private final long maxBackoffMs;
+    private final String proxyHost;
+    private final int proxyPort;
 
     public LlmCallPolicy(@Value("${paiagent.llm.connect-timeout-ms:10000}") long connectTimeoutMs,
                          @Value("${paiagent.llm.read-timeout-ms:120000}") long readTimeoutMs,
                          @Value("${paiagent.llm.max-attempts:3}") int maxAttempts,
                          @Value("${paiagent.llm.retry-initial-backoff-ms:1000}") long initialBackoffMs,
-                         @Value("${paiagent.llm.retry-max-backoff-ms:8000}") long maxBackoffMs) {
+                         @Value("${paiagent.llm.retry-max-backoff-ms:8000}") long maxBackoffMs,
+                         @Value("${paiagent.llm.proxy-host:}") String proxyHost,
+                         @Value("${paiagent.llm.proxy-port:0}") int proxyPort) {
         this.connectTimeoutMs = connectTimeoutMs;
         this.readTimeoutMs = readTimeoutMs;
         this.maxAttempts = Math.max(1, maxAttempts);
         this.initialBackoffMs = initialBackoffMs;
         this.maxBackoffMs = Math.max(initialBackoffMs, maxBackoffMs);
+        this.proxyHost = proxyHost;
+        this.proxyPort = proxyPort;
     }
 
     public static LlmCallPolicy defaults() {
-        return new LlmCallPolicy(10_000, 120_000, 3, 1_000, 8_000);
+        return new LlmCallPolicy(10_000, 120_000, 3, 1_000, 8_000, "", 0);
+    }
+
+    private java.net.http.HttpClient.Builder applyProxy(java.net.http.HttpClient.Builder builder) {
+        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+            builder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)));
+        }
+        return builder;
     }
 
     public JdkClientHttpRequestFactory requestFactory() {
-        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
+        java.net.http.HttpClient client = applyProxy(java.net.http.HttpClient.newBuilder()
                 .version(Version.HTTP_1_1)
-                .connectTimeout(Duration.ofMillis(connectTimeoutMs))
+                .connectTimeout(Duration.ofMillis(connectTimeoutMs)))
                 .build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(client);
         factory.setReadTimeout(Duration.ofMillis(readTimeoutMs));
@@ -67,8 +82,8 @@ public class LlmCallPolicy {
 
     /** 本项目没有引入 reactor-netty，WebClient 走 JDK HttpClient；这里只能设置连接超时，流式的空闲超时由 GuardedChatModel 负责。 */
     public WebClient.Builder webClientBuilder() {
-        java.net.http.HttpClient client = java.net.http.HttpClient.newBuilder()
-                .connectTimeout(Duration.ofMillis(connectTimeoutMs))
+        java.net.http.HttpClient client = applyProxy(java.net.http.HttpClient.newBuilder()
+                .connectTimeout(Duration.ofMillis(connectTimeoutMs)))
                 .build();
         return WebClient.builder().clientConnector(new JdkClientHttpConnector(client));
     }
