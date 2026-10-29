@@ -43,7 +43,7 @@
 - **[PaiAgent MCP 服务](mcp-server/README.md)**：把工作流封装成 Agent 可调用的工具（`list_workflows` / `start_workflow` / `get_execution` / `resume_execution` / `cancel_execution`），带结构化错误、`request_id` 防重复提交、工作流白名单
 - **取消执行**：`POST /api/workflows/{id}/executions/{eid}/cancel`，协作式取消（`RUNNING → CANCELLING → CANCELLED`），两个引擎行为一致，已完成的节点保留、可以续跑；调试面板里有“取消执行”按钮
 - **健康检查与容器化**：`/actuator/health`（存活 / 就绪探针，匿名只返回状态）；`docker-compose.yml` 一条命令起 MySQL + Redis + MinIO + 后端 + 前端（见下文“Docker 一键启动”）
-- **测试**：当前后端 248 个、前端 28 个、MCP 服务 57 个测试用例
+- **测试**：当前后端 248 个、前端 28 个、MCP 服务 58 个测试用例
 
 > 配套教程（下方"项目教程"）由上游作者撰写并发布在技术派，版权归原作者，本仓库不含教程正文，仅保留链接。
 
@@ -549,7 +549,9 @@ docker compose up -d --build
 
 前端 http://localhost:8080，后端接口文档 http://localhost:8084/swagger-ui.html，健康检查 http://localhost:8084/actuator/health。MySQL / Redis 不发布到宿主机；数据在命名卷里，`docker compose down` 不会丢，`docker compose down -v` 才会清空。必填项没设时 compose 会直接报错并说明是哪一项。
 
-> 说明：`docker-compose.yml` 的语法和必填项检查已验证；**镜像构建与整套启动我当时没能验证**（那台机器的 Docker 拉不到基础镜像）。第一次使用请以实际结果为准，遇到问题欢迎提 issue。
+MinIO 使用 `cgr.dev/chainguard/minio:latest`，避免已经不可拉取的 `minio/minio` 地址。该镜像以 UID 65532 运行，因此 `minio-init` 会先把命名卷权限交给这个用户，再启动 MinIO。`schema.sql` 开头显式执行 `SET NAMES utf8mb4`，保证 Docker 首次初始化不会把中文双重编码。
+
+> 验证范围：2026-10-29 已实际构建前后端镜像并启动整套 Compose，验证后端就绪探针、前端页面、SPA 路由、nginx 配置、登录／鉴权 API 代理链路，以及全新数据库的中文初始化。未运行真实模型，也未验证实际 SSE 事件流和媒体制品链路。
 
 ### 🎬 快速演示
 

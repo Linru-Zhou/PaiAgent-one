@@ -105,6 +105,20 @@ describe('MCP 工具（通过真实的 MCP 协议调用）', () => {
     assert.equal(limited.data.total, 3);
   });
 
+  it('list_workflows：keyword 无匹配时给出恢复提示', async () => {
+    const { call } = await connect();
+
+    const result = await call('list_workflows', { keyword: '不存在的工作流' });
+
+    assert.equal(result.isError, false);
+    assert.equal(result.data.ok, true);
+    assert.equal(result.data.total, 0);
+    assert.deepEqual(result.data.workflows, []);
+    assert.match(result.data.hint, /未找到匹配/);
+    assert.match(result.data.hint, /更换关键词/);
+    assert.match(result.data.hint, /不传 keyword/);
+  });
+
   it('start_workflow：立即返回 execution_id 和下一步指引', async () => {
     const { call } = await connect();
     const result = await call('start_workflow', { workflow_id: 1, input_text: '  讲讲 CHM  ' });

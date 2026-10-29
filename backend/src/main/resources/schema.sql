@@ -1,3 +1,6 @@
+-- Docker 首次初始化也必须按 UTF-8 读取本文件，否则中文会被按 latin1 写入 utf8mb4 列而形成乱码。
+SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;
+
 -- 创建数据库
 CREATE DATABASE IF NOT EXISTS paiagent DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

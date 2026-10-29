@@ -75,7 +75,8 @@ export function createServer(config: Config, client: PaiAgentClient, log: Logger
     ({ keyword, limit }) =>
       guarded('list_workflows', { has_keyword: Boolean(keyword) }, async () => {
         const all = await client.listWorkflows();
-        const needle = keyword?.trim().toLowerCase();
+        const trimmedKeyword = keyword?.trim();
+        const needle = trimmedKeyword?.toLowerCase();
         const visible = all
           .filter((workflow) => !config.allowedWorkflows || config.allowedWorkflows.has(workflow.id))
           .filter((workflow) => !needle || `${workflow.name} ${workflow.description ?? ''}`.toLowerCase().includes(needle));
@@ -85,6 +86,9 @@ export function createServer(config: Config, client: PaiAgentClient, log: Logger
           returned: Math.min(visible.length, limit),
           truncated: visible.length > limit,
           workflows: visible.slice(0, limit).map(summarizeWorkflow),
+          ...(needle && visible.length === 0 ? {
+            hint: `未找到匹配“${trimmedKeyword}”的工作流。请更换关键词，或不传 keyword 列出全部工作流`,
+          } : {}),
         };
       }),
   );
